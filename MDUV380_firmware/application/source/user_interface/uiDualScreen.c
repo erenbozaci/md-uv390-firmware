@@ -92,6 +92,11 @@ static bool zoneUsable(void)
 // Index in zone 'z' to use for a channel row (0 / first in use when the stored one is not valid any more)
 static int16_t validIndexInZone(const CodeplugZone_t *z, int16_t idx)
 {
+	if (idx < 0)
+	{
+		idx = codeplugGetLastUsedChannelInZone(z->NOT_IN_CODEPLUGDATA_indexNumber); // row not set yet: what the zone had
+	}
+
 	if (CODEPLUG_ZONE_IS_ALLCHANNELS(*z))
 	{
 		if ((idx >= 1) && codeplugAllChannelsIndexIsInUse(idx))
@@ -149,59 +154,96 @@ bool uiDualScreenCanDraw(void)
 	return (uiDualScreenIsEnabled() && (trxTransmissionEnabled == false) && (trxIsTransmitting == false) && (uiDataGlobal.displayChannelSettings == false));
 }
 
+// Fixed palette (RGB888): the rows are drawn as cards, independent of the theme (which is black and white by default)
+#define COL_CARD_ACTIVE     0x0B5FA5U
+#define COL_CARD_INACTIVE   0x2B3038U
+#define COL_TEXT_ACTIVE     0xFFFFFFU
+#define COL_TEXT_INACTIVE   0xE6ECF2U
+#define COL_DMR             0x3DDC84U
+#define COL_ANALOG          0xFFB74DU
+#define COL_NUMBER          0xA9B8C8U
+#define COL_ZONE            0x9CC3E6U
+#define COL_VFO_LABEL       0x7FDDEAU
+
+#if defined(HAS_COLOURS)
+// Print 'text' with colour 'fg' on the card colour 'card', 'x' is the left edge
+static void printOnCard(int16_t x, int16_t y, const char *text, ucFont_t font, uint32_t fg, uint16_t card)
+{
+	displaySetForegroundAndBackgroundColours(displayConvertRGB888ToNative(fg), card);
+	displayPrintCore(x, y, text, font, TEXT_ALIGN_LEFT, false);
+}
+
+// Centered on the full width, characters are 8 pixels wide in both fonts used here
+static void printCentered(int16_t y, const char *text, ucFont_t font, uint32_t fg, uint16_t card)
+{
+	printOnCard((int16_t)((DISPLAY_SIZE_X - (int)(strlen(text) * 8U)) / 2), y, text, font, fg, card);
+}
+#endif
+
 static void drawRow(int line, int16_t y, bool active)
 {
-	char l1[SCREEN_LINE_BUFFER_SIZE + 8];
-	char l2[SCREEN_LINE_BUFFER_SIZE + 8];
-	char l3[SCREEN_LINE_BUFFER_SIZE + 8];
 	char name[SCREEN_LINE_BUFFER_SIZE];
+	char l1[SCREEN_LINE_BUFFER_SIZE + 8];
+	char number[8];
+	char mode[8];
+	char l3[SCREEN_LINE_BUFFER_SIZE + 8];
 	CodeplugChannel_t tmp;
 	CodeplugZone_t zoneTmp;
 	CodeplugChannel_t *ch = NULL;
-	const char *modeShort = "";
+	bool digital = false;
+	bool isChannelRow = lineIsChannel(line);
 
+	l1[0] = 0;
+	number[0] = 0;
+	mode[0] = 0;
 	l3[0] = 0;
 
-	if (lineIsChannel(line) == false)
+	if (isChannelRow == false)
 	{
 		ch = &settingsVFOChannel[line];
-		modeShort = ((ch->chMode == RADIO_MODE_DIGITAL) ? "DMR" : "ANA");
+		digital = (ch->chMode == RADIO_MODE_DIGITAL);
 		snprintf(l1, sizeof(l1), "%d.%05d", (int)(ch->rxFreq / 100000), (int)(ch->rxFreq % 100000));
-		snprintf(l2, sizeof(l2), "%s", modeShort);
 		snprintf(l3, sizeof(l3), "VFO %c", (line ? 'B' : 'A'));
 	}
 	else
 	{
 		const CodeplugZone_t *zone = NULL;
-		int number = 0; // position in the zone, 1 based (the channel number itself in the All Channels zone)
+		int num = 0; // position in the zone, 1 based (the channel number itself in the All Channels zone)
 
 		if (active)
 		{
-			ch = &channelScreenChannelData;
-			zone = &currentZone;
-			number = codeplugGetLastUsedChannelInCurrentZone();
+			if (zoneUsable())
+			{
+				ch = &channelScreenChannelData;
+				zone = &currentZone;
+				num = codeplugGetLastUsedChannelInCurrentZone();
+			}
 		}
 		else if (codeplugZoneGetDataForNumber(zoneOfLine(line), &zoneTmp) && (zoneTmp.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0))
 		{
 			int16_t idx = validIndexInZone(&zoneTmp, slotIndex[line]);
+			int16_t chNumber = channelNumberForIndex(&zoneTmp, idx);
 
-			codeplugChannelGetDataForIndex(channelNumberForIndex(&zoneTmp, idx), &tmp);
-			ch = &tmp;
-			zone = &zoneTmp;
-			number = idx;
+			if (chNumber >= 1) // 0 is an empty slot of the zone
+			{
+				codeplugChannelGetDataForIndex(chNumber, &tmp);
+				ch = &tmp;
+				zone = &zoneTmp;
+				num = idx;
+			}
 		}
 
 		if (zone != NULL)
 		{
-			number += (CODEPLUG_ZONE_IS_ALLCHANNELS(*zone) ? 0 : 1);
+			num += (CODEPLUG_ZONE_IS_ALLCHANNELS(*zone) ? 0 : 1);
 		}
 
 		if ((ch != NULL) && (ch->rxFreq != 0U) && (zone != NULL))
 		{
+			digital = (ch->chMode == RADIO_MODE_DIGITAL);
 			codeplugUtilConvertBufToString((char *)ch->name, name, 16);
 			snprintf(l1, sizeof(l1), "%s", name);
-			// channels show the number in the zone and the mode, not the frequency
-			snprintf(l2, sizeof(l2), "C%03d %s", number, ((ch->chMode == RADIO_MODE_DIGITAL) ? "DMR" : "ANA"));
+			snprintf(number, sizeof(number), "C%03d", num);
 
 			if (CODEPLUG_ZONE_IS_ALLCHANNELS(*zone))
 			{
@@ -209,30 +251,76 @@ static void drawRow(int line, int16_t y, bool active)
 			}
 			else
 			{
-				char zoneName[SCREEN_LINE_BUFFER_SIZE];
-
-				codeplugUtilConvertBufToString((char *)zone->name, zoneName, 16);
-				snprintf(l3, sizeof(l3), "%s", zoneName);
+				codeplugUtilConvertBufToString((char *)zone->name, name, 16);
+				snprintf(l3, sizeof(l3), "%s", name);
 			}
 		}
 		else
 		{
 			snprintf(l1, sizeof(l1), "%s", "--");
-			snprintf(l2, sizeof(l2), "%s", "no channel");
+			snprintf(l3, sizeof(l3), "%s", "no channel");
+			ch = NULL;
 		}
 	}
 
-	if (active)
+	if (ch != NULL)
 	{
-		displayThemeApply(THEME_ITEM_BG_MENU_ITEM_SELECTED, THEME_ITEM_BG);
-		displayFillRoundRect(DISPLAY_X_POS_MENU_OFFSET, y, (DISPLAY_SIZE_X - (DISPLAY_X_POS_MENU_OFFSET * 2)), ((FONT_SIZE_3_HEIGHT * 2) + FONT_SIZE_2_HEIGHT + 6), 2, true);
+		snprintf(mode, sizeof(mode), "%s", (digital ? "DMR" : "ANA"));
+	}
+	else
+	{
+		snprintf(mode, sizeof(mode), "%s", "");
 	}
 
-	displayThemeApply(THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_BG);
-	displayPrintCore(0, (y + 2), l1, FONT_SIZE_3, TEXT_ALIGN_CENTER, active);
-	displayPrintCore(0, (y + 2 + FONT_SIZE_3_HEIGHT), l2, FONT_SIZE_3, TEXT_ALIGN_CENTER, active);
-	displayPrintCore(0, (y + 2 + (FONT_SIZE_3_HEIGHT * 2)), l3, FONT_SIZE_2, TEXT_ALIGN_CENTER, active);
-	displayThemeResetToDefault();
+#if defined(HAS_COLOURS)
+	{
+		const uint16_t card = displayConvertRGB888ToNative(active ? COL_CARD_ACTIVE : COL_CARD_INACTIVE);
+		const uint32_t text = (active ? COL_TEXT_ACTIVE : COL_TEXT_INACTIVE);
+		const uint32_t modeColour = (digital ? COL_DMR : COL_ANALOG);
+		const int16_t height = ((FONT_SIZE_3_HEIGHT * 2) + FONT_SIZE_2_HEIGHT + 6);
+
+		// The card
+		displaySetForegroundAndBackgroundColours(card, card);
+		displayFillRoundRect(DISPLAY_X_POS_MENU_OFFSET, y, (DISPLAY_SIZE_X - (DISPLAY_X_POS_MENU_OFFSET * 2)), height, 4, true);
+
+		printCentered((y + 2), l1, FONT_SIZE_3, text, card);
+
+		// Second line: "C012 DMR" (number grey, mode coloured) or just the mode for a VFO
+		if (number[0] != 0)
+		{
+			int16_t total = (int16_t)((strlen(number) + 1U + strlen(mode)) * 8U);
+			int16_t x = (int16_t)((DISPLAY_SIZE_X - total) / 2);
+
+			printOnCard(x, (y + 2 + FONT_SIZE_3_HEIGHT), number, FONT_SIZE_3, COL_NUMBER, card);
+			printOnCard((int16_t)(x + ((strlen(number) + 1U) * 8U)), (y + 2 + FONT_SIZE_3_HEIGHT), mode, FONT_SIZE_3, modeColour, card);
+		}
+		else
+		{
+			printCentered((y + 2 + FONT_SIZE_3_HEIGHT), mode, FONT_SIZE_3, modeColour, card);
+		}
+
+		printCentered((y + 2 + (FONT_SIZE_3_HEIGHT * 2)), l3, FONT_SIZE_2, (isChannelRow ? COL_ZONE : COL_VFO_LABEL), card);
+		displayThemeResetToDefault();
+	}
+#else
+	{
+		char l2[SCREEN_LINE_BUFFER_SIZE + 8];
+
+		snprintf(l2, sizeof(l2), "%s%s%s", number, (number[0] ? " " : ""), mode);
+
+		if (active)
+		{
+			displayThemeApply(THEME_ITEM_BG_MENU_ITEM_SELECTED, THEME_ITEM_BG);
+			displayFillRoundRect(DISPLAY_X_POS_MENU_OFFSET, y, (DISPLAY_SIZE_X - (DISPLAY_X_POS_MENU_OFFSET * 2)), ((FONT_SIZE_3_HEIGHT * 2) + FONT_SIZE_2_HEIGHT + 6), 2, true);
+		}
+
+		displayThemeApply(THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_BG);
+		displayPrintCore(0, (y + 2), l1, FONT_SIZE_3, TEXT_ALIGN_CENTER, active);
+		displayPrintCore(0, (y + 2 + FONT_SIZE_3_HEIGHT), l2, FONT_SIZE_3, TEXT_ALIGN_CENTER, active);
+		displayPrintCore(0, (y + 2 + (FONT_SIZE_3_HEIGHT * 2)), l3, FONT_SIZE_2, TEXT_ALIGN_CENTER, active);
+		displayThemeResetToDefault();
+	}
+#endif
 }
 
 void uiDualScreenDraw(void)
@@ -246,6 +334,16 @@ void uiDualScreenScreenEntered(bool channelScreen)
 	if (uiDualScreenIsEnabled() == false)
 	{
 		return;
+	}
+
+	// A channel row that has no zone yet gets the current one (so a later zone change only moves the active row)
+	for (int l = 0; l < 2; l++)
+	{
+		if (lineIsChannel(l) && (slotZone[l] < 0) && zoneUsable())
+		{
+			slotZone[l] = nonVolatileSettings.currentZone;
+			slotIndex[l] = codeplugGetLastUsedChannelInCurrentZone();
+		}
 	}
 
 	// Whatever way the screen has been entered, the active row follows it
@@ -271,6 +369,13 @@ static void goToLine(int line)
 	if (lineIsChannel(line))
 	{
 		int16_t zoneNum = zoneOfLine(line);
+
+		if ((zoneNum < 0) || (zoneNum >= codeplugZonesGetCount()))
+		{
+			slotZone[line] = -1; // the zone has gone away, stay in the current one
+			slotIndex[line] = -1;
+			zoneNum = nonVolatileSettings.currentZone;
+		}
 
 		if ((zoneNum != nonVolatileSettings.currentZone) || (zoneUsable() == false))
 		{
