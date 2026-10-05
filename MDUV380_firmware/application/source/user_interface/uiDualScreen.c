@@ -33,6 +33,7 @@
 #include "user_interface/uiDualScreen.h"
 #include "user_interface/uiLocalisation.h"
 #include "functions/trx.h"
+#include "functions/sound.h"
 
 #if defined(HAS_DUAL_WATCH_OPTIONS)
 
@@ -48,6 +49,7 @@
 
 static int16_t slotIndex[2] = { -1, -1 };
 static int16_t slotZone[2] = { -1, -1 };
+static bool slotsRestored = false;
 
 static uint16_t opts(void)
 {
@@ -138,6 +140,22 @@ static void rememberActiveChannelRow(int line)
 	}
 }
 
+// A signal is being received when the radio unmutes its speaker amplifier
+static bool receiving(void)
+{
+	return ((audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) != 0);
+}
+
+bool uiDualScreenRxStateChanged(void)
+{
+	static bool lastReceiving = false;
+	bool now = receiving();
+	bool changed = ((now != lastReceiving) && uiDualScreenIsEnabled());
+
+	lastReceiving = now;
+	return changed;
+}
+
 bool uiDualScreenIsEnabled(void)
 {
 	return ((opts() & DUALWATCH_DUAL_SCREEN) != 0U);
@@ -154,16 +172,28 @@ bool uiDualScreenCanDraw(void)
 	return (uiDualScreenIsEnabled() && (trxTransmissionEnabled == false) && (trxIsTransmitting == false) && (uiDataGlobal.displayChannelSettings == false));
 }
 
-// Fixed palette (RGB888): the rows are drawn as cards, independent of the theme (which is black and white by default)
-#define COL_CARD_ACTIVE     0x0B5FA5U
-#define COL_CARD_INACTIVE   0x2B3038U
-#define COL_TEXT_ACTIVE     0xFFFFFFU
-#define COL_TEXT_INACTIVE   0xE6ECF2U
-#define COL_DMR             0x3DDC84U
-#define COL_ANALOG          0xFFB74DU
-#define COL_NUMBER          0xA9B8C8U
-#define COL_ZONE            0x9CC3E6U
-#define COL_VFO_LABEL       0x7FDDEAU
+// Fixed palettes (RGB888). Each row has small coloured badges on its first line (channel number or "VFO A", and DMR / ANA),
+// then the name (or the frequency of a VFO) and the zone. The active row is drawn with vivid colours, the other one muted.
+// Two palettes so that everything is readable on a light theme background (the default) as well as on a dark one.
+typedef struct
+{
+	uint32_t name;
+	uint32_t zone;
+	uint32_t numBg, numFg;
+	uint32_t dmrBg, dmrFg;
+	uint32_t anaBg, anaFg;
+	uint32_t vfoBg, vfoFg;
+} palette_t;
+
+static const palette_t paletteLightActive   = { 0x000000U, 0x0D47A1U, 0x455A64U, 0xFFFFFFU, 0x00802BU, 0xFFFFFFU, 0xD35400U, 0xFFFFFFU, 0x00838FU, 0xFFFFFFU };
+static const palette_t paletteLightInactive = { 0x8E979FU, 0xA7B8C9U, 0xC3CCD2U, 0xFFFFFFU, 0xA6CDB6U, 0xFFFFFFU, 0xEBC9ABU, 0xFFFFFFU, 0xB2D3D8U, 0xFFFFFFU };
+static const palette_t paletteDarkActive    = { 0xFFFFFFU, 0x6FC3FFU, 0x546E7AU, 0xFFFFFFU, 0x1FA85AU, 0xFFFFFFU, 0xE08A00U, 0x1A1000U, 0x1B97A6U, 0xFFFFFFU };
+static const palette_t paletteDarkInactive  = { 0x7C8894U, 0x4F7391U, 0x2E3A42U, 0x8A98A4U, 0x1D4D35U, 0x8FBFA3U, 0x4D3A1CU, 0xB89C74U, 0x1E474DU, 0x8FB7BDU };
+
+#define COL_RX_BG           0x1DD65CU // "RX" badge on the active row while a signal is received
+#define COL_RX_FG           0x000000U
+#define BADGE_HEIGHT        10
+#define BADGE_GAP           3
 
 #if defined(HAS_COLOURS)
 // Print 'text' with colour 'fg' on the card colour 'card', 'x' is the left edge
@@ -177,6 +207,18 @@ static void printOnCard(int16_t x, int16_t y, const char *text, ucFont_t font, u
 static void printCentered(int16_t y, const char *text, ucFont_t font, uint32_t fg, uint16_t card)
 {
 	printOnCard((int16_t)((DISPLAY_SIZE_X - (int)(strlen(text) * 8U)) / 2), y, text, font, fg, card);
+}
+
+// Small badge: rounded coloured rectangle with the text in it, returns its width
+static int16_t drawBadge(int16_t x, int16_t y, const char *text, uint32_t fg, uint32_t bg, uint16_t card)
+{
+	int16_t w = (int16_t)((strlen(text) * 8U) + 4U);
+	uint16_t bgNative = displayConvertRGB888ToNative(bg);
+
+	displaySetForegroundAndBackgroundColours(bgNative, card);
+	displayFillRoundRect(x, y, w, BADGE_HEIGHT, 2, true);
+	printOnCard((int16_t)(x + 2), (int16_t)(y + 1), text, FONT_SIZE_2, fg, bgNative);
+	return w;
 }
 #endif
 
@@ -274,32 +316,55 @@ static void drawRow(int line, int16_t y, bool active)
 
 #if defined(HAS_COLOURS)
 	{
-		const uint16_t card = displayConvertRGB888ToNative(active ? COL_CARD_ACTIVE : COL_CARD_INACTIVE);
-		const uint32_t text = (active ? COL_TEXT_ACTIVE : COL_TEXT_INACTIVE);
-		const uint32_t modeColour = (digital ? COL_DMR : COL_ANALOG);
-		const int16_t height = ((FONT_SIZE_3_HEIGHT * 2) + FONT_SIZE_2_HEIGHT + 6);
+		uint16_t fgDummy;
+		uint16_t card; // the theme background, everything is printed on it
+		bool darkBackground;
+		const palette_t *pal;
+		int16_t x = (DISPLAY_X_POS_MENU_OFFSET + 2);
 
-		// The card
-		displaySetForegroundAndBackgroundColours(card, card);
-		displayFillRoundRect(DISPLAY_X_POS_MENU_OFFSET, y, (DISPLAY_SIZE_X - (DISPLAY_X_POS_MENU_OFFSET * 2)), height, 4, true);
+		displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
+		displayGetForegroundAndBackgroundColours(&fgDummy, &card);
+		// Brightness from the green channel (6 bits, same position in RGB565 and BGR565), the colours are stored byte swapped
+		darkBackground = ((((uint16_t)((card >> 8) | (card << 8)) >> 5) & 0x3FU) < 0x20U);
 
-		printCentered((y + 2), l1, FONT_SIZE_3, text, card);
-
-		// Second line: "C012 DMR" (number grey, mode coloured) or just the mode for a VFO
-		if (number[0] != 0)
+		if (active)
 		{
-			int16_t total = (int16_t)((strlen(number) + 1U + strlen(mode)) * 8U);
-			int16_t x = (int16_t)((DISPLAY_SIZE_X - total) / 2);
-
-			printOnCard(x, (y + 2 + FONT_SIZE_3_HEIGHT), number, FONT_SIZE_3, COL_NUMBER, card);
-			printOnCard((int16_t)(x + ((strlen(number) + 1U) * 8U)), (y + 2 + FONT_SIZE_3_HEIGHT), mode, FONT_SIZE_3, modeColour, card);
+			pal = (darkBackground ? &paletteDarkActive : &paletteLightActive);
 		}
 		else
 		{
-			printCentered((y + 2 + FONT_SIZE_3_HEIGHT), mode, FONT_SIZE_3, modeColour, card);
+			pal = (darkBackground ? &paletteDarkInactive : &paletteLightInactive);
 		}
 
-		printCentered((y + 2 + (FONT_SIZE_3_HEIGHT * 2)), l3, FONT_SIZE_2, (isChannelRow ? COL_ZONE : COL_VFO_LABEL), card);
+		// First line, at the start of the row: channel number (or "VFO A") and the mode
+		if (isChannelRow == false)
+		{
+			x += (drawBadge(x, y, l3, pal->vfoFg, pal->vfoBg, card) + BADGE_GAP);
+		}
+		else if (number[0] != 0)
+		{
+			x += (drawBadge(x, y, number, pal->numFg, pal->numBg, card) + BADGE_GAP);
+		}
+
+		if (mode[0] != 0)
+		{
+			drawBadge(x, y, mode, (digital ? pal->dmrFg : pal->anaFg), (digital ? pal->dmrBg : pal->anaBg), card);
+		}
+
+		// Signal received on the active row
+		if (active && receiving())
+		{
+			drawBadge((int16_t)(DISPLAY_SIZE_X - (DISPLAY_X_POS_MENU_OFFSET + 2) - ((2 * 8) + 4)), y, "RX", COL_RX_FG, COL_RX_BG, card);
+		}
+
+		// Name (or the frequency of a VFO), then the zone
+		printCentered((y + BADGE_HEIGHT + 3), l1, FONT_SIZE_3, pal->name, card);
+
+		if (isChannelRow)
+		{
+			printCentered((y + BADGE_HEIGHT + 3 + FONT_SIZE_3_HEIGHT + 1), l3, FONT_SIZE_2, pal->zone, card);
+		}
+
 		displayThemeResetToDefault();
 	}
 #else
@@ -325,8 +390,50 @@ static void drawRow(int line, int16_t y, bool active)
 
 void uiDualScreenDraw(void)
 {
-	drawRow(0, 20, (activeLine() == 0));
+	drawRow(0, 22, (activeLine() == 0));
 	drawRow(1, 70, (activeLine() == 1));
+
+	// Bottom left label of the green key (opens the menu). 0xFC is u-umlaut in the firmware font (Windows-1252)
+	displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
+	displayPrintCore((DISPLAY_X_POS_MENU_OFFSET + 2), (DISPLAY_SIZE_Y - FONT_SIZE_2_HEIGHT - 1), "Men\xFC", FONT_SIZE_2, TEXT_ALIGN_LEFT, false);
+	displayThemeResetToDefault();
+}
+
+// The row that is not active is the only one whose channel has to be saved (the active one is the radio's own
+// zone / channel). It is packed in dualScreenSlot (16 bits) + one bit of dualWatchOptions: zone (7) | index (10).
+static void persistPassiveRow(void)
+{
+	int p = 1 - activeLine();
+	uint16_t o = (opts() & ~(DUALWATCH_SLOT_BIT16 | DUALWATCH_SLOT_VALID));
+
+	if (lineIsChannel(p) && (slotZone[p] >= 0) && (slotZone[p] < 128) && (slotIndex[p] >= 0) && (slotIndex[p] < 1024))
+	{
+		uint32_t packed = (((uint32_t)slotZone[p] << 10) | (uint32_t)slotIndex[p]);
+		int16_t low = (int16_t)(packed & 0xFFFFU);
+
+		o |= (DUALWATCH_SLOT_VALID | (((packed >> 16) & 1U) ? DUALWATCH_SLOT_BIT16 : 0U));
+
+		if (nonVolatileSettings.dualScreenSlot != low)
+		{
+			settingsSet(nonVolatileSettings.dualScreenSlot, low);
+		}
+	}
+
+	setOpts(o);
+}
+
+// After a power cycle: get the non active channel row back
+static void restorePassiveRow(void)
+{
+	int p = 1 - activeLine();
+
+	if ((opts() & DUALWATCH_SLOT_VALID) && lineIsChannel(p) && (slotZone[p] < 0))
+	{
+		uint32_t packed = (((opts() & DUALWATCH_SLOT_BIT16) ? 0x10000UL : 0UL) | (uint16_t)nonVolatileSettings.dualScreenSlot);
+
+		slotZone[p] = (int16_t)(packed >> 10);
+		slotIndex[p] = (int16_t)(packed & 0x3FFU);
+	}
 }
 
 void uiDualScreenScreenEntered(bool channelScreen)
@@ -334,6 +441,12 @@ void uiDualScreenScreenEntered(bool channelScreen)
 	if (uiDualScreenIsEnabled() == false)
 	{
 		return;
+	}
+
+	if (slotsRestored == false)
+	{
+		slotsRestored = true;
+		restorePassiveRow();
 	}
 
 	// A channel row that has no zone yet gets the current one (so a later zone change only moves the active row)
@@ -361,6 +474,8 @@ void uiDualScreenScreenEntered(bool channelScreen)
 		setActiveLine(v);
 		setLineType(v, false);
 	}
+
+	persistPassiveRow();
 }
 
 // Select what the radio has to show / tune to for a row, by running the matching screen

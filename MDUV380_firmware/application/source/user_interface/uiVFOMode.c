@@ -308,6 +308,15 @@ menuStatus_t uiVFOMode(uiEvent_t *ev, bool isFirstRun)
 		}
 #endif
 
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+		// Redraw the two rows when a signal starts / stops (frame around the active row)
+		if (uiDualScreenRxStateChanged() && (uiDataGlobal.displayQSOState == QSO_DISPLAY_IDLE) && (uiDataGlobal.Scan.active == false))
+		{
+			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
+			uiVFOModeUpdateScreen(0);
+		}
+#endif
+
 		if (ev->events == NO_EVENT)
 		{
 			bool updateLHDisplay = ((nonVolatileSettings.lastTalkerOnScreenTimer > 0U) &&

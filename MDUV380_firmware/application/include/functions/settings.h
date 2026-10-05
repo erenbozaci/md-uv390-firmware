@@ -213,7 +213,7 @@ typedef struct
 	int16_t				currentChannelIndexInAllZone;
 #else // These two has to be used on any platform but RD5R and MD-9600
 	int16_t				dualWatchOptions; // see DUALWATCH_* below (was UNUSED_1, always 0 in older settings = defaults)
-	int16_t				UNUSED_2;
+	int16_t				dualScreenSlot; // dual screen: zone (7 bits) and index (10 bits) of the non active channel row, low 16 bits (bit 16 is in dualWatchOptions)
 #endif
 	uint16_t			aprsBeaconingSettingsPart2;
 	uint8_t				txPowerLevel;
@@ -280,6 +280,8 @@ typedef struct
 #define DUALWATCH_LINE_A_CHANNEL 0x0100U // dual screen: row A is a channel (else VFO A)
 #define DUALWATCH_LINE_B_CHANNEL 0x0200U // dual screen: row B is a channel (else VFO B)
 #define DUALWATCH_ACTIVE_B      0x0400U // dual screen: row B is the active one
+#define DUALWATCH_SLOT_BIT16    0x0800U // dual screen: bit 16 of the saved slot (nonVolatileSettings.dualScreenSlot holds the low 16 bits)
+#define DUALWATCH_SLOT_VALID    0x1000U // dual screen: the saved slot of the non active channel row is valid
 #define DUALWATCH_SPEED_TABLE   { 0U, 90U, 200U, 400U } // ms per step, 0 = use the scan step time setting
 #define DUALWATCH_NUM_SPEEDS    4U
 #endif
