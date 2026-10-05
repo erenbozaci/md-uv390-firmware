@@ -3,7 +3,7 @@ name: Build firmware
 on:
   push:
     branches: [main]
-    tags: ['R*-EA4IPW*']
+    tags: ['R*-EA4IPW*', 'R*-TA3BZC*']
   pull_request:
   workflow_dispatch:
 
@@ -80,7 +80,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/R') && contains(github.ref, '-EA4IPW')
+    if: startsWith(github.ref, 'refs/tags/R') && (contains(github.ref, '-EA4IPW') || contains(github.ref, '-TA3BZC'))
     runs-on: ubuntu-latest
 
     steps:
@@ -94,13 +94,12 @@ jobs:
         run: |
           mkdir -p release
           # download-artifact@v4 unpacks each artifact into its own subdir.
-          # Rename the bins to the friendlier marketing names downstream
-          # users actually recognise (RT3S is the most common name for the
-          # MDUV380-family hardware in this hemisphere), then sha256 them.
+          # Rename the bins to the radio names users actually recognise,
+          # then sha256 them. Keep these names in sync with the README.
           cp dist/OpenGD77_MDUV380/OpenGD77_MDUV380.bin \
-             release/OpenGD77_MDUV380_RT3S.bin
+             release/OpenGD77_MD-UV380_RT3S.bin
           cp dist/OpenGD77_MDUV380_UV380_PLUS_10W/OpenGD77_MDUV380_UV380_PLUS_10W.bin \
-             release/OpenGD77_MDUV380_RT3S_10W.bin
+             release/OpenGD77_MD-UV390_Plus_10W.bin
           cp dist/OpenGD77_RT84_DM1701_DM1701/OpenGD77_RT84_DM1701_DM1701.bin \
              release/OpenGD77_RT84_DM1701.bin
           cd release && sha256sum *.bin > SHA256SUMS && cat SHA256SUMS
@@ -113,7 +112,8 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            Unofficial build by EA4IPW based on upstream OpenGD77 source.
+            Unofficial build by TA3BZC, a fork of the OpenGD77 source (dual screen, Dual Watch
+            options, messaging, experimental DMR SMS).
 
             **Not affiliated with the OpenGD77 project.** For canonical
             firmware see <https://www.opengd77.com/>.
@@ -122,8 +122,14 @@ jobs:
 
             | File | Radio |
             |---|---|
-            | `OpenGD77_MDUV380_RT3S.bin` | Retevis RT3S (incl. GPS), TYT MD-UV380, MD-380UV (stock 5W hardware) |
-            | `OpenGD77_MDUV380_RT3S_10W.bin` | Same family with the **10W power-amp mod** applied |
+            | `OpenGD77_MD-UV390_Plus_10W.bin` | TYT MD-UV390 Plus 10W (and an MD-UV380 / RT3S with the 10W power-amp mod). The one used by the author |
+            | `OpenGD77_MD-UV380_RT3S.bin` | TYT MD-UV380 / MD-UV390 (5W), Retevis RT3S (incl. GPS) |
             | `OpenGD77_RT84_DM1701.bin` | Retevis RT-84, Baofeng DM-1701 |
 
-            Verify downloads against `SHA256SUMS`.
+            ### Installing
+
+            These files contain **no AMBE codec**. They have to be flashed with the loader in this
+            repository, which patches the codec in from the official TYT MD9600 V26.45 firmware
+            (see the README, "Getting started"). Flashing them with another tool gives an FM only radio.
+
+            Verify downloads against `SHA256SUMS`. The DMR SMS code has not been tested on the air.

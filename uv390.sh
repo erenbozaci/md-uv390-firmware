@@ -8,15 +8,17 @@
 #   ./uv390.sh size           flash/RAM usage of the last build (RAM is almost full!)
 #   ./uv390.sh doc <name>     screenshot saved as docs/screenshots/<name>.png (for the README)
 #
-# DFU mode: power off, hold SK1, power on. Python tools live in ./.venv (created on first use).
+# Other radios:  PLATFORM=MDUV380 VARIANT= MODEL=MD-UV380 ./uv390.sh build   (MD-UV380 / RT3S)
+#                PLATFORM=RT84_DM1701 VARIANT=DM1701 MODEL=DM-1701 ./uv390.sh all   (RT-84 / DM-1701)
+# DFU mode (MD-UV380/390 family): power off, hold SK1, power on. Python tools live in ./.venv (created on first use).
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FW="$REPO/MDUV380_firmware"
 PLATFORM="${PLATFORM:-MDUV380}"
-VARIANT="${VARIANT:-UV380_PLUS_10W}"
-BIN="$FW/build/OpenGD77_${PLATFORM}_${VARIANT}.bin"
+VARIANT="${VARIANT-UV380_PLUS_10W}"   # unset: UV390 Plus 10W, VARIANT= (empty) is allowed: plain MDUV380
+if [ -n "$VARIANT" ]; then BIN="$FW/build/OpenGD77_${PLATFORM}_${VARIANT}.bin"; else BIN="$FW/build/OpenGD77_${PLATFORM}.bin"; fi
 MODEL="${MODEL:-MD-UV380}"
 DONOR="${DONOR:-$REPO/donor/MD9600-CSV(2571V5)-V26.45.bin}"
 VENV="$REPO/.venv"
@@ -44,7 +46,7 @@ dfu_present() { lsusb 2>/dev/null | grep -qi "0483:df11"; }
 
 do_build() {
     local eng; eng="$(engine)"
-    echo "== build $PLATFORM $VARIANT ($eng) =="
+    echo "== build $PLATFORM ${VARIANT:-(no variant)} ($eng) =="
     ( cd "$FW" && make rebuild CONTAINER_ENGINE="$eng" PLATFORM="$PLATFORM" VARIANT="$VARIANT" 2>&1 \
         | grep -E "error|warning: |CLEAN|overflowed|undefined" | grep -v "#warning\|Wcpp" || true )
     [ -f "$BIN" ] || die "build failed, no $BIN"
@@ -126,7 +128,7 @@ case "${1:-}" in
         SHOT_DELAY=10 do_shot "${2:-screen.png}"
         ;;
     *)
-        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
         exit 1
         ;;
 esac

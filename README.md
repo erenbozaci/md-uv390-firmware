@@ -2,7 +2,8 @@
 
 An **unofficial, personal fork of [OpenGD77](https://www.opengd77.com/)** for the
 **TYT MD-UV390 Plus (10W)**, the colour-screen, GPS, IP67 dual-band DMR handheld of the
-MDUV380 radio family (the same firmware also builds for the MD-UV380, Retevis RT3S, RT-84 and Baofeng DM-1701).
+MDUV380 radio family (the same source also builds for the **MD-UV380 / MD-UV390 (5W), Retevis RT3S, Retevis RT-84 and Baofeng DM-1701**,
+see [Other radios](#other-radios)).
 
 Maintained by Eren Bozaci, **TA3BZC**. Not affiliated with the OpenGD77 project: if you want the canonical firmware,
 use [opengd77.com](https://www.opengd77.com/).
@@ -119,6 +120,44 @@ The loader is `MDUV380_firmware/tools/opengd77_stm32_firmware_loader.py` if you 
 The radio shows up as a USB serial port; the tool reads the display buffer with the CPS read command, so no special
 firmware mode is needed. It does not work while the radio is in DFU or hotspot mode.
 
+## Other radios
+
+The tree builds three firmware images. The UV390 Plus 10W is the radio this fork is developed and tested on.
+**The other two build and link cleanly (CI builds all three), but have not been run on a real radio by the author.**
+
+| Radio | Release file | `PLATFORM` / `VARIANT` | Loader model (`-m`) |
+|---|---|---|---|
+| **TYT MD-UV390 Plus 10W** (also an MD-UV380 / RT3S with the 10W power-amp mod) | `OpenGD77_MD-UV390_Plus_10W.bin` | `MDUV380` / `UV380_PLUS_10W` | `MD-UV380` |
+| TYT MD-UV380 / MD-UV390 (5W), Retevis RT3S (with GPS) | `OpenGD77_MD-UV380_RT3S.bin` | `MDUV380` / *(none)* | `MD-UV380` |
+| Retevis RT-84, Baofeng DM-1701 | `OpenGD77_RT84_DM1701.bin` | `RT84_DM1701` / `DM1701` | `DM-1701` |
+
+Build and flash the other images with the same helper, selecting the radio with environment variables:
+
+```sh
+# TYT MD-UV380 / MD-UV390 (5W), Retevis RT3S
+PLATFORM=MDUV380 VARIANT= MODEL=MD-UV380 ./uv390.sh build
+PLATFORM=MDUV380 VARIANT= MODEL=MD-UV380 ./uv390.sh flash
+
+# Retevis RT-84, Baofeng DM-1701
+PLATFORM=RT84_DM1701 VARIANT=DM1701 MODEL=DM-1701 ./uv390.sh build
+PLATFORM=RT84_DM1701 VARIANT=DM1701 MODEL=DM-1701 ./uv390.sh flash
+
+# all three at once, results in MDUV380_firmware/dist/
+cd MDUV380_firmware && make build-all CONTAINER_ENGINE=docker
+```
+
+Notes for these radios:
+
+- **Same codec donor** (`MD9600-CSV(2571V5)-V26.45.bin`, see above): every STM32 radio of the family gets its AMBE codec from it.
+- **DFU mode:** on the MD-UV380 / MD-UV390 / RT3S family power the radio off, hold **SK1**, power on. For the RT-84 and
+  DM-1701 the author has not verified the key combination, check the radio's own bootloader instructions (usually a side
+  key held while powering on).
+- **The dual screen layout is drawn for the MD-UV380/390 display** (160x128). On the DM-1701 the usable screen is shorter, so
+  the rows and the `Menü` label may not fit. The RT-84 / DM-1701 key mapping (`KEY_FRONT_UP/DOWN`) is also untested here.
+- **Not supported by this tree:** MD-2017 / RT82, MD-9600 / RT90, MD-380 / RT3 (their source trees are separate upstream
+  archives, see `PLANS/unify_sourcecodes.md`) and the NXP MK22 radios (GD-77, GD-77S, RD-5R, DM-1801...), which are a
+  different project.
+
 ## Repository layout
 
 | Path | Contents |
@@ -150,10 +189,27 @@ firmware mode is needed. It does not work while the radio is in DFU or hotspot m
 - Only one receiver: the non-active row is not monitored (Dual Watch switches quickly between the sides).
 - With the dual screen on, the arrow keys no longer change the squelch / the talkgroup (use the options and the quick menu).
 
-## Releases (CI)
+## Downloads and releases
 
-GitHub Actions builds the three variants on every push. Pushing a tag `R<upstream YYYYMMDD>-EA4IPW.<N>` publishes a
-GitHub Release with the binaries and `SHA256SUMS` (see `.github/workflows/build.yml`).
+Ready-made images are published as GitHub Releases. The three files and a `SHA256SUMS` file are attached to each release:
+
+| File | Radio |
+|---|---|
+| `OpenGD77_MD-UV390_Plus_10W.bin` | TYT MD-UV390 Plus 10W (the author's radio) |
+| `OpenGD77_MD-UV380_RT3S.bin` | TYT MD-UV380 / MD-UV390 (5W), Retevis RT3S |
+| `OpenGD77_RT84_DM1701.bin` | Retevis RT-84, Baofeng DM-1701 |
+
+They contain **no AMBE codec**: flash them with the loader of this repository (`./uv390.sh flash`, see
+[Getting started](#getting-started)), which patches the codec in from the donor file. Another flashing tool gives an FM only radio.
+
+To publish a release, push a tag named `R<upstream date>-TA3BZC.<n>` (for example `R20260131-TA3BZC.1`). GitHub Actions
+(`.github/workflows/build.yml`) then builds the three variants, renames the files as above, writes `SHA256SUMS` and creates the
+release. (Tags `R*-EA4IPW*` of the earlier working copy still work.)
+
+```sh
+git tag -a R20260131-TA3BZC.1 -m "Dual screen, Dual Watch options, messaging"
+git push origin R20260131-TA3BZC.1
+```
 
 ## License: non-commercial only
 
@@ -193,6 +249,11 @@ Dual Watch'ı ayarlardan yönetmek için yapıldı.
 4. `./uv390.sh build`
 5. Telsizi DFU moduna al (kapalıyken **SK1** basılı tut, aç) ve `./uv390.sh flash`
 6. Ekran görüntüsü için `./uv390.sh shot` (README görüntüleri için `./uv390.sh doc <isim>`).
+
+**Diğer telsizler:** Aynı kaynak MD-UV380 / MD-UV390 (5W), Retevis RT3S, Retevis RT-84 ve Baofeng DM-1701 için de derleniyor
+(yukarıdaki "Other radios" tablosu). Örneğin `PLATFORM=RT84_DM1701 VARIANT=DM1701 MODEL=DM-1701 ./uv390.sh build`. Bu iki
+görüntü derleniyor ama gerçek telsizde denenmedi, iki satırlı ekran yalnızca MD-UV380/390 ekranına göre çizildi.
+Hazır dosyalar GitHub Releases'te: `OpenGD77_MD-UV390_Plus_10W.bin`, `OpenGD77_MD-UV380_RT3S.bin`, `OpenGD77_RT84_DM1701.bin`.
 
 **Dürüst durum:** İki satırlı ekran telsizde denendi ve çalışıyor. DMR SMS henüz havada **denenmedi** (deneysel).
 Telsizde tek alıcı olduğu için aynı anda iki frekansı dinlemek donanım olarak mümkün değil, Dual Watch hızlı geçiş yapar.

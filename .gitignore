@@ -31,3 +31,5 @@ __pycache__/
 # Local Python venv used by uv390.sh and screenshots
 /.venv/
 /screen*.png
+/release/
+/MDUV380_firmware/dist/

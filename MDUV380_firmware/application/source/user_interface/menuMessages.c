@@ -33,10 +33,19 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
+#include "user_interface/uiWidgets.h"
 #include "functions/messaging.h"
 #include "functions/trx.h"
 
-#define LINE_CHARS 16 // characters per row (8px font)
+#define VIEW_CHARS       18  // characters per line of a message (8 px font, 160 px screen, room for the scroll marks)
+#define VIEW_ROWS        4   // lines of a message shown at once
+#define COMPOSE_CHARS    17  // characters per line inside the message box
+#define COMPOSE_ROWS     2
+#define LIST_VISIBLE     3   // cards shown at once
+#define CARD_TOP         19
+#define CARD_HEIGHT      32
+#define PREVIEW_CHARS    18
+#define NAME_CHARS       8   // sender name in a card
 
 static void updateScreen(bool isFirstRun);
 static void handleEvent(uiEvent_t *ev);
@@ -68,8 +77,10 @@ static int toPos;
 static int textPos;
 static int cannedIndex;
 static int statusTimeout;
+static bool statusError;
 static const char *statusLine1;
 static const char *statusLine2;
+static bool lastBlink;
 
 #define DMR_ID_MAX_DIGITS 8
 
@@ -142,15 +153,9 @@ static void cursorRight(char *str, int *pos, int max, bool insertSpace)
 	}
 }
 
-static int viewTextRows(void)
-{
-	// last row is used by the key hints
-	return (MENU_END_ITERATION_VALUE - MENU_START_ITERATION_VALUE);
-}
-
 static int viewTotalRows(const messagingEntry_t *e)
 {
-	return (((int)strlen(e->text) + LINE_CHARS - 1) / LINE_CHARS);
+	return (((int)strlen(e->text) + VIEW_CHARS - 1) / VIEW_CHARS);
 }
 
 menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
@@ -168,13 +173,13 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 
 	if (state == STATE_COMPOSE)
 	{
-		int col = ((menuDataGlobal.currentItemIndex == COMPOSE_TO) ? (3 + toPos) : (textPos % LINE_CHARS));
+		// Blinking cursor: redraw when it changes
+		bool blink = (((ticksGetMillis() / 500U) & 1U) == 0U);
 
-		if ((menuDataGlobal.currentItemIndex == COMPOSE_TO) || (menuDataGlobal.currentItemIndex == COMPOSE_TEXT))
+		if (blink != lastBlink)
 		{
-			displayThemeApply(THEME_ITEM_BG, THEME_ITEM_BG_MENU_ITEM_SELECTED);
-			menuUpdateCursor(col, false, true);
-			displayThemeResetToDefault();
+			lastBlink = blink;
+			updateScreen(false);
 		}
 	}
 
@@ -186,22 +191,311 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 	return menuMessagesExitCode;
 }
 
-static void viewGetRow(const messagingEntry_t *e, int row, char *buf)
+// "20:46" for a message of today, "05/10" for an older one, "--:--" when the clock was not set
+static void formatTime(uint32_t t, char *buf, size_t size)
 {
-	size_t len = strlen(e->text);
-	size_t start = ((size_t)row * LINE_CHARS);
-
-	buf[0] = 0;
-	if (start < len)
+	if (t == 0U)
 	{
-		snprintf(buf, (LINE_CHARS + 1), "%s", &e->text[start]);
+		snprintf(buf, size, "--:--");
+		return;
+	}
+
+	int32_t offset = ((nonVolatileSettings.timezone & 0x80) ? (((nonVolatileSettings.timezone & 0x7F) - 64) * (15 * 60)) : 0);
+	time_t_custom local = (time_t_custom)((int32_t)t + offset);
+	time_t_custom now = (time_t_custom)((int32_t)uiDataGlobal.dateTimeSecs + offset);
+	struct tm tmv;
+
+	gmtime_r_Custom(&local, &tmv);
+
+	if ((local / 86400) == (now / 86400))
+	{
+		snprintf(buf, size, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+	}
+	else
+	{
+		snprintf(buf, size, "%02d/%02d", tmv.tm_mday, (tmv.tm_mon + 1));
+	}
+}
+
+// Name of the other party: the callsign from the DMR ID database when it is known, otherwise the ID / callsign as is
+static void peerName(const messagingEntry_t *e, char *buf, size_t size, size_t maxChars)
+{
+	dmrIdDataStruct_t rec;
+
+	if ((e->transport == MESSAGING_TRANSPORT_DMR) && dmrIDLookup((uint32_t)atoi(e->peer), &rec) && (rec.text[0] != 0))
+	{
+		size_t n = 0;
+
+		while ((rec.text[n] != 0) && (rec.text[n] != ' ') && (n < maxChars) && (n < (size - 1U)))
+		{
+			buf[n] = rec.text[n];
+			n++;
+		}
+		buf[n] = 0;
+		return;
+	}
+
+	snprintf(buf, size, "%.*s", (int)maxChars, e->peer);
+}
+
+// One card of the list: item 0 is "New message". Plain: name, a < / > arrow for the direction, the time and the start of
+// the text; a blue dot and brighter text mark an unread message
+static void drawCard(int16_t y, bool selected, int item)
+{
+	const uiWidgetPalette_t *pal = uiWidgetsPalette();
+	uint16_t bg = uiWidgetsThemeBackground();
+
+	if (selected)
+	{
+		uiWidgetsFillRoundRect(2, y, (DISPLAY_SIZE_X - 4), (CARD_HEIGHT - 2), 3, pal->selFill);
+		bg = uiWidgetsColour(pal->selFill);
+	}
+
+	if (item == 0)
+	{
+		uiWidgetsText(8, (y + 7), "+", FONT_SIZE_3, pal->accent, bg);
+		uiWidgetsText(28, (y + 7), "New message", FONT_SIZE_3, pal->text, bg);
+		return;
+	}
+
+	const messagingEntry_t *e = messagingGetEntry(item - 1);
+
+	if (e == NULL)
+	{
+		return;
+	}
+
+	char name[NAME_CHARS + 1];
+	char when[16];
+	char preview[PREVIEW_CHARS + 1];
+	const uint32_t textColour = (e->unread ? pal->text : pal->muted);
+
+	peerName(e, name, sizeof(name), NAME_CHARS);
+	snprintf(when, sizeof(when), "%s ", (e->outgoing ? ">" : "<"));
+	formatTime(e->time, &when[2], (sizeof(when) - 2U));
+	snprintf(preview, sizeof(preview), "%.*s", PREVIEW_CHARS, e->text);
+
+	if (e->unread)
+	{
+		uiWidgetsFillRoundRect(6, (y + 4), 6, 6, 3, pal->accent);
+	}
+
+	uiWidgetsText(16, (y + 3), name, FONT_SIZE_2, textColour, bg);
+	uiWidgetsTextRight((DISPLAY_SIZE_X - 5), (y + 3), when, FONT_SIZE_2, pal->muted, bg);
+	uiWidgetsText(6, (y + 13), preview, FONT_SIZE_3, textColour, bg);
+}
+
+static void drawList(void)
+{
+	const uiWidgetPalette_t *pal = uiWidgetsPalette();
+	const uint16_t bg = uiWidgetsThemeBackground();
+	const int total = menuDataGlobal.numItems; // "New message" + the messages
+	const uint32_t unread = messagingGetUnreadCount();
+	char buf[SCREEN_LINE_BUFFER_SIZE + 6];
+	int first = (menuDataGlobal.currentItemIndex - 1);
+
+	if (first > (total - LIST_VISIBLE))
+	{
+		first = (total - LIST_VISIBLE);
+	}
+	if (first < 0)
+	{
+		first = 0;
+	}
+
+	if (unread > 0U)
+	{
+		snprintf(buf, sizeof(buf), "Messages (%u new)", (unsigned int)unread);
+	}
+	else
+	{
+		snprintf(buf, sizeof(buf), "%s", "Messages");
+	}
+	menuDisplayTitle(buf);
+
+	for (int i = 0; (i < LIST_VISIBLE) && ((first + i) < total); i++)
+	{
+		drawCard((CARD_TOP + (i * CARD_HEIGHT)), ((first + i) == menuDataGlobal.currentItemIndex), (first + i));
+	}
+
+	if (total == 1)
+	{
+		// Nothing received or sent yet
+		uiWidgetsTextCentered((CARD_TOP + CARD_HEIGHT + 14), "No messages yet", FONT_SIZE_3, pal->muted, bg);
+		uiWidgetsTextCentered((CARD_TOP + CARD_HEIGHT + 34), "Select New message", FONT_SIZE_2, pal->muted, bg);
+	}
+
+	if (menuDataGlobal.currentItemIndex > 0)
+	{
+		snprintf(buf, sizeof(buf), "%d/%d", menuDataGlobal.currentItemIndex, (total - 1));
+		uiWidgetsSoftKeys("Select", buf, "Back");
+	}
+	else
+	{
+		uiWidgetsSoftKeys("Select", NULL, "Back");
+	}
+}
+
+static void drawView(void)
+{
+	const uiWidgetPalette_t *pal = uiWidgetsPalette();
+	const uint16_t bg = uiWidgetsThemeBackground();
+	const messagingEntry_t *e = messagingGetEntryBySeq(viewSeq, NULL);
+
+	if (e == NULL)
+	{
+		return;
+	}
+
+	char buf[SCREEN_LINE_BUFFER_SIZE + 4];
+	char row[VIEW_CHARS + 1];
+	char when[8];
+	const bool isDmr = (e->transport == MESSAGING_TRANSPORT_DMR);
+	const int totalRows = viewTotalRows(e);
+
+	peerName(e, buf, sizeof(buf), 16);
+	menuDisplayTitle(buf);
+
+	// One muted line: Received / Sent, the transport and the time
+	formatTime(e->time, when, sizeof(when));
+	snprintf(row, sizeof(row), "%s %s", (e->outgoing ? "Sent" : "Received"), (isDmr ? "DMR" : "APRS"));
+	uiWidgetsText(6, 22, row, FONT_SIZE_2, pal->muted, bg);
+	uiWidgetsTextRight((DISPLAY_SIZE_X - 5), 22, when, FONT_SIZE_2, pal->muted, bg);
+
+	// The text, 19 characters per line
+	for (int r = 0; r < VIEW_ROWS; r++)
+	{
+		size_t start = (size_t)(viewScroll + r) * VIEW_CHARS;
+
+		if (start < strlen(e->text))
+		{
+			snprintf(row, sizeof(row), "%.*s", VIEW_CHARS, &e->text[start]);
+			uiWidgetsText(4, (36 + (r * 16)), row, FONT_SIZE_3, pal->text, bg);
+		}
+	}
+
+	// More text above / below
+	if (viewScroll > 0)
+	{
+		uiWidgetsTextRight((DISPLAY_SIZE_X - 3), 36, "^", FONT_SIZE_2, pal->accent, bg);
+	}
+	if ((viewScroll + VIEW_ROWS) < totalRows)
+	{
+		uiWidgetsTextRight((DISPLAY_SIZE_X - 3), 96, "v", FONT_SIZE_2, pal->accent, bg);
+	}
+
+	uiWidgetsSoftKeys("Reply", "# Del", "Back");
+}
+
+static void drawCompose(void)
+{
+	const uiWidgetPalette_t *pal = uiWidgetsPalette();
+	const uint16_t bg = uiWidgetsThemeBackground();
+	const int field = menuDataGlobal.currentItemIndex;
+	const bool dmr = composeIsDmr();
+	char buf[SCREEN_LINE_BUFFER_SIZE + 8];
+	char row[COMPOSE_CHARS + 1];
+	const int textLen = (int)strlen(composeText);
+
+	menuDisplayTitle("New message");
+	// DMR ID is digits only, entered with the plain keypad
+	keypadAlphaEnable = ((field == COMPOSE_TEXT) || ((field == COMPOSE_TO) && (dmr == false)));
+
+	// To
+	uiWidgetsText(6, 19, (dmr ? "TO  DMR ID" : "TO  CALLSIGN"), FONT_SIZE_2, ((field == COMPOSE_TO) ? pal->accent : pal->muted), bg);
+	uiWidgetsOutline(4, 28, 152, 18, 3, ((field == COMPOSE_TO) ? pal->accent : pal->separator), bg);
+	if (field == COMPOSE_TO)
+	{
+		uiWidgetsOutline(5, 29, 150, 16, 2, pal->accent, bg);
+	}
+	if (composeTo[0] != 0)
+	{
+		uiWidgetsText(10, 29, composeTo, FONT_SIZE_3, pal->text, bg);
+	}
+	else
+	{
+		uiWidgetsText(10, 29, (dmr ? "number" : "callsign"), FONT_SIZE_3, pal->separator, bg);
+	}
+	if ((field == COMPOSE_TO) && lastBlink)
+	{
+		uiWidgetsFillRoundRect((int16_t)(10 + (toPos * UI_WIDGET_CHAR_WIDTH)), 43, UI_WIDGET_CHAR_WIDTH, 2, 0, pal->accent);
+	}
+
+	// Message
+	snprintf(buf, sizeof(buf), "%d/%d", textLen, (MESSAGING_TEXT_LEN - 1));
+	uiWidgetsText(6, 49, "MESSAGE", FONT_SIZE_2, ((field == COMPOSE_TEXT) ? pal->accent : pal->muted), bg);
+	uiWidgetsTextRight((DISPLAY_SIZE_X - 6), 49, buf, FONT_SIZE_2, ((textLen >= (MESSAGING_TEXT_LEN - 8)) ? pal->error : pal->muted), bg);
+	uiWidgetsOutline(4, 58, 152, 36, 3, ((field == COMPOSE_TEXT) ? pal->accent : pal->separator), bg);
+	if (field == COMPOSE_TEXT)
+	{
+		uiWidgetsOutline(5, 59, 150, 34, 2, pal->accent, bg);
+	}
+
+	{
+		int cursorLine = (textPos / COMPOSE_CHARS);
+		int firstLine = ((cursorLine >= COMPOSE_ROWS) ? (cursorLine - (COMPOSE_ROWS - 1)) : 0);
+
+		if (textLen == 0)
+		{
+			uiWidgetsText(10, 61, "type a message", FONT_SIZE_3, pal->separator, bg);
+		}
+
+		for (int r = 0; r < COMPOSE_ROWS; r++)
+		{
+			int start = ((firstLine + r) * COMPOSE_CHARS);
+
+			if (start < textLen)
+			{
+				snprintf(row, sizeof(row), "%.*s", COMPOSE_CHARS, &composeText[start]);
+				uiWidgetsText(10, (61 + (r * 16)), row, FONT_SIZE_3, pal->text, bg);
+			}
+		}
+
+		if ((field == COMPOSE_TEXT) && lastBlink)
+		{
+			uiWidgetsFillRoundRect((int16_t)(10 + ((textPos % COMPOSE_CHARS) * UI_WIDGET_CHAR_WIDTH)), (int16_t)(61 + ((cursorLine - firstLine) * 16) + 14), UI_WIDGET_CHAR_WIDTH, 2, 0, pal->accent);
+		}
+	}
+
+	// Quick (canned) message
+	uiWidgetsOutline(4, 98, 152, 14, 3, ((field == COMPOSE_CANNED) ? pal->accent : pal->separator), bg);
+	if (field == COMPOSE_CANNED)
+	{
+		uiWidgetsOutline(5, 99, 150, 12, 2, pal->accent, bg);
+	}
+	snprintf(buf, sizeof(buf), "< %s >", messagingGetCanned(cannedIndex));
+	uiWidgetsTextCentered(101, buf, FONT_SIZE_2, ((field == COMPOSE_CANNED) ? pal->text : pal->muted), bg);
+
+	if (field == COMPOSE_CANNED)
+	{
+		uiWidgetsSoftKeys("Use", "Knob:pick", "Back");
+	}
+	else if (field == COMPOSE_TEXT)
+	{
+		uiWidgetsSoftKeys("Send", "Knob:move", "Back");
+	}
+	else
+	{
+		uiWidgetsSoftKeys("Send", NULL, "Back");
+	}
+}
+
+static void drawStatus(void)
+{
+	const uiWidgetPalette_t *pal = uiWidgetsPalette();
+	const uint16_t bg = uiWidgetsThemeBackground();
+
+	menuDisplayTitle("Messages");
+	uiWidgetsTextCentered(46, statusLine1, FONT_SIZE_3, (statusError ? pal->error : pal->text), bg);
+
+	if (statusLine2 != NULL)
+	{
+		uiWidgetsTextCentered(68, statusLine2, FONT_SIZE_2, pal->muted, bg);
 	}
 }
 
 static void updateScreen(bool isFirstRun)
 {
-	char buf[SCREEN_LINE_BUFFER_SIZE];
-
 	(void)isFirstRun;
 
 	displayClearBuf();
@@ -209,120 +503,23 @@ static void updateScreen(bool isFirstRun)
 	switch (state)
 	{
 		case STATE_LIST:
-			menuDisplayTitle("Messages");
-
-			for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
-			{
-				int mNum = menuGetMenuOffset(menuDataGlobal.numItems, i);
-
-				if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
-				{
-					continue;
-				}
-				else if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)
-				{
-					break;
-				}
-
-				if (mNum == 0)
-				{
-					snprintf(buf, sizeof(buf), "%s", "[New message]");
-				}
-				else
-				{
-					const messagingEntry_t *e = messagingGetEntry(mNum - 1);
-
-					snprintf(buf, sizeof(buf), "%c%c%s %s", (e->unread ? '*' : ' '), (e->outgoing ? '>' : '<'), e->peer, e->text);
-				}
-
-				menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
-			}
+			drawList();
 			break;
 
 		case STATE_VIEW:
-			{
-				const messagingEntry_t *e = messagingGetEntryBySeq(viewSeq, NULL);
-
-				if (e == NULL)
-				{
-					break;
-				}
-
-				snprintf(buf, sizeof(buf), "%s %s", (e->outgoing ? "To" : "From"), e->peer);
-				menuDisplayTitle(buf);
-
-				displayThemeApply(THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_BG);
-				for (int row = 0; row < viewTextRows(); row++)
-				{
-					viewGetRow(e, (viewScroll + row), buf);
-					displayPrintCore(DISPLAY_X_POS_MENU_TEXT_OFFSET, (DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + ((MENU_START_ITERATION_VALUE + row) * MENU_ENTRY_HEIGHT)), buf, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
-				}
-
-				displayThemeApply(THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
-				displayPrintCore(DISPLAY_X_POS_MENU_TEXT_OFFSET, (DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + (MENU_END_ITERATION_VALUE * MENU_ENTRY_HEIGHT)), "GRN:reply #:del", FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
-				displayThemeResetToDefault();
-			}
+			drawView();
 			break;
 
 		case STATE_COMPOSE:
-			{
-				static const char *const titles[NUM_COMPOSE_ITEMS] = { "To (callsign)", "Message", "Canned message" };
-
-				menuDisplayTitle((menuDataGlobal.currentItemIndex == COMPOSE_TO) ? (composeIsDmr() ? "To (DMR ID)" : titles[COMPOSE_TO]) : titles[menuDataGlobal.currentItemIndex]);
-				// DMR ID is digits only, entered with the plain keypad
-				keypadAlphaEnable = ((menuDataGlobal.currentItemIndex == COMPOSE_TEXT) || ((menuDataGlobal.currentItemIndex == COMPOSE_TO) && (composeIsDmr() == false)));
-
-				for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
-				{
-					int mNum = menuGetMenuOffset(NUM_COMPOSE_ITEMS, i);
-
-					if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
-					{
-						continue;
-					}
-					else if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)
-					{
-						break;
-					}
-
-					switch (mNum)
-					{
-						case COMPOSE_TO:
-							snprintf(buf, sizeof(buf), "To:%s", composeTo);
-							break;
-
-						case COMPOSE_TEXT:
-							// Show the 16 chars window containing the cursor
-							snprintf(buf, sizeof(buf), "%s", &composeText[(textPos / LINE_CHARS) * LINE_CHARS]);
-							if (buf[0] == 0)
-							{
-								snprintf(buf, sizeof(buf), "%s", "(empty)");
-							}
-							break;
-
-						default:
-							snprintf(buf, sizeof(buf), "%s", messagingGetCanned(cannedIndex));
-							break;
-					}
-
-					menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
-				}
-
-				displayThemeApply(THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
-				displayPrintCore(DISPLAY_X_POS_MENU_TEXT_OFFSET, (DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + (MENU_END_ITERATION_VALUE * MENU_ENTRY_HEIGHT)), "GRN:send RED:back", FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
-				displayThemeResetToDefault();
-			}
+			drawCompose();
 			break;
 
 		case STATE_STATUS:
-			displayPrintCentered(16, statusLine1, FONT_SIZE_3);
-			if (statusLine2 != NULL)
-			{
-				displayPrintCentered(32, statusLine2, FONT_SIZE_3);
-			}
+			drawStatus();
 			break;
 	}
 
+	displayThemeResetToDefault();
 	displayRender();
 }
 
@@ -419,6 +616,7 @@ static void handleCompose(uiEvent_t *ev)
 					soundSetMelody(MELODY_ERROR_BEEP);
 					statusLine1 = "Cannot send";
 					statusLine2 = "check DMR ID";
+					statusError = true;
 					state = STATE_STATUS;
 					statusTimeout = 1500;
 				}
@@ -427,6 +625,7 @@ static void handleCompose(uiEvent_t *ev)
 			{
 				statusLine1 = "Sent";
 				statusLine2 = NULL;
+				statusError = false;
 				state = STATE_STATUS;
 				statusTimeout = 1500;
 			}
@@ -435,6 +634,7 @@ static void handleCompose(uiEvent_t *ev)
 				soundSetMelody(MELODY_ERROR_BEEP);
 				statusLine1 = "Cannot send";
 				statusLine2 = "check APRS cfg";
+				statusError = true;
 				state = STATE_STATUS;
 				statusTimeout = 1500;
 			}
@@ -538,7 +738,7 @@ static void handleEvent(uiEvent_t *ev)
 
 				if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 				{
-					if ((viewScroll + viewTextRows()) < viewTotalRows(e))
+					if ((viewScroll + VIEW_ROWS) < viewTotalRows(e))
 					{
 						viewScroll++;
 						updateScreen(false);

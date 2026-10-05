@@ -280,6 +280,17 @@ static void messagingAdd(messagingTransport_t transport, const char *peer, const
 void messagingInit(void)
 {
 	messagesCount = 0;
+
+#if defined(MESSAGES_DEMO)
+	// Sample messages to look at the inbox screens (build with DEMO_MESSAGES=1), oldest first
+	messagingAdd(MESSAGING_TRANSPORT_APRS, "TA3XYZ", "QSL 73", true);
+	messagingAdd(MESSAGING_TRANSPORT_DMR, "2860001", "Tamam, yarim saate oradayim", false);
+	messagingAdd(MESSAGING_TRANSPORT_DMR, "2860123", "Merhaba! Bu uzun bir deneme mesajidir, satirlara bolunur ve kaydirilir.", false);
+	messagingAdd(MESSAGING_TRANSPORT_DMR, "2860123", "Naber, role calisiyor mu?", true);
+	messagingAdd(MESSAGING_TRANSPORT_APRS, "TA3ABC", "Test mesaji 1234", false);
+	messages[0].unread = true;
+	messages[2].unread = false;
+#endif
 }
 
 uint32_t messagingGetCount(void)

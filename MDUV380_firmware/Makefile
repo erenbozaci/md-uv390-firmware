@@ -45,6 +45,11 @@ DEFS := \
 GITVERSION := $(shell git -c safe.directory='*' -C $(CURDIR) rev-parse --short HEAD 2>/dev/null || echo UNKNOWN)
 DEFS += -DGITVERSION=\"$(GITVERSION)\"
 
+# DEMO_MESSAGES=1 puts a few sample messages in the inbox at boot (to look at the Messages screens), never for a release
+ifeq ($(DEMO_MESSAGES),1)
+DEFS += -DMESSAGES_DEMO
+endif
+
 INCLUDES := \
     -I. \
     -ICore/Inc \
@@ -89,7 +94,7 @@ OBJS := $(OBJS:.S=.o)
 DEPS := $(OBJS:.o=.d)
 
 # --- targets -----------------------------------------------------------------
-.PHONY: all clean prepare flash-bin
+.PHONY: all clean distclean prepare flash-bin
 
 all: $(BUILD_DIR)/$(OUT_NAME).bin
 
@@ -130,8 +135,12 @@ $(BUILD_DIR)/%.o: %.S
 	@echo "  AS    $<"
 	@$(AS) $(ASFLAGS) -c $< -o $@
 
+# 'clean' must not touch dist/: build-all runs it before each variant and collects the bins there
 clean:
-	rm -rf $(BUILD_DIR) $(DIST_DIR)
+	rm -rf $(BUILD_DIR)
+
+distclean: clean
+	rm -rf $(DIST_DIR)
 
 # --- containerised build (run from the HOST) --------------------------------
 # The build needs a Linux ARM toolchain, so "make build" drives a podman
@@ -149,7 +158,7 @@ SRC_DIR          := $(abspath $(CURDIR)/..)
 CONTAINER_RUN = $(CONTAINER_ENGINE) run --rm \
                 -v $(SRC_DIR):/src:Z \
                 -w /src/MDUV380_firmware \
-                -e PLATFORM=$(PLATFORM) -e VARIANT=$(VARIANT) \
+                -e PLATFORM=$(PLATFORM) -e VARIANT=$(VARIANT) -e DEMO_MESSAGES=$(DEMO_MESSAGES) \
                 $(IMG_TAG)
 
 .PHONY: image build rebuild help
@@ -181,7 +190,7 @@ build-all: image
 	@set -e; for v in $(ALL_VARIANTS); do \
 	    p=$${v%%:*}; r=$${v#*:}; \
 	    echo "=== building PLATFORM=$$p VARIANT=$$r ==="; \
-	    $(CONTAINER_RUN) sh -c "make clean && make -j$(JOBS) all PLATFORM=$$p VARIANT=$$r && cp build/OpenGD77_*.bin $(DIST_DIR)/"; \
+	    $(CONTAINER_RUN) sh -c "make clean && make -j$(JOBS) all PLATFORM=$$p VARIANT=$$r && mkdir -p $(DIST_DIR) && cp build/OpenGD77_*.bin $(DIST_DIR)/"; \
 	done
 	@echo '=== build-all complete ==='
 	@ls -la $(DIST_DIR)/OpenGD77_*.bin
