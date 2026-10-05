@@ -65,6 +65,7 @@ typedef enum
 
 // internal prototypes
 static void handleEvent(uiEvent_t *ev);
+static void dualWatchStart(void);
 static void handleQuickMenuEvent(uiEvent_t *ev);
 static void updateQuickMenuScreen(bool isFirstRun);
 static void updateFrequency(int frequency, bool announceImmediately);
@@ -272,6 +273,15 @@ menuStatus_t uiVFOMode(uiEvent_t *ev, bool isFirstRun)
 		{
 			uiDataGlobal.VoicePrompts.inhibitInitial = false;
 		}
+
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+		// "Auto start" Dual Watch option (also resumes it after a transmission)
+		if ((((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_AUTOSTART) && (uiDataGlobal.Scan.active == false) &&
+				(screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_NORMAL))
+		{
+			dualWatchStart();
+		}
+#endif
 
 		menuVFOExitStatus = MENU_STATUS_SUCCESS;
 	}
@@ -834,6 +844,75 @@ bool uiVFOModeIsTXFocused(void)
 {
 	return (selectedFreq == VFO_SELECTED_FREQUENCY_INPUT_TX);
 }
+
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+static uint8_t dualWatchHomeVFO = 0;
+
+static uint16_t dualWatchStepMs(void)
+{
+	static const uint16_t speeds[DUALWATCH_NUM_SPEEDS] = DUALWATCH_SPEED_TABLE;
+	uint16_t idx = ((((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_SPEED_MASK) >> DUALWATCH_SPEED_SHIFT);
+
+	return ((speeds[idx] != 0U) ? speeds[idx] : (uint16_t)settingsGetScanStepTimeMilliseconds());
+}
+#endif
+
+static void dualWatchStart(void)
+{
+	uiDataGlobal.Scan.active = true;
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+	uiDataGlobal.Scan.stepTimeMilliseconds = dualWatchStepMs();
+	{
+		uint16_t home = ((((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_HOME_MASK) >> DUALWATCH_HOME_SHIFT);
+
+		dualWatchHomeVFO = ((home == 0U) ? nonVolatileSettings.currentVFONumber : (home - 1U));
+	}
+#else
+	uiDataGlobal.Scan.stepTimeMilliseconds = settingsGetScanStepTimeMilliseconds();
+#endif
+	uiDataGlobal.Scan.dwellTime = 135;// for Dual Watch, use a larger step time than normally scanning, and which does not synchronise with the DMR 30ms timeslots
+	uiDataGlobal.Scan.timer.timeout = uiDataGlobal.Scan.dwellTime;
+	uiDataGlobal.Scan.refreshOnEveryStep = false;
+	screenOperationMode[CHANNEL_VFO_A] = screenOperationMode[CHANNEL_VFO_B] = VFO_SCREEN_OPERATION_DUAL_SCAN;
+	uiDataGlobal.VoicePrompts.inhibitInitial = true;
+	uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_WATCH;
+	int currentPowerSavingLevel = rxPowerSavingGetLevel();
+	if (currentPowerSavingLevel > 1)
+	{
+		rxPowerSavingSetLevel(currentPowerSavingLevel - 1);
+	}
+}
+
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+// "On RX: Stay" option. While Dual Watch is visiting the VFO which isn't the home one, a carrier only
+// gives a (rate limited) beep and the scan carries on; returns true when it has handled the VFO this way.
+static bool dualWatchStayCheck(void)
+{
+	static uint32_t lastAlertTime = 0;
+
+	if ((screenOperationMode[nonVolatileSettings.currentVFONumber] != VFO_SCREEN_OPERATION_DUAL_SCAN) ||
+			((((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_STAY) == 0U) ||
+			(nonVolatileSettings.currentVFONumber == dualWatchHomeVFO))
+	{
+		return false;
+	}
+
+	if (trxCarrierDetected(RADIO_DEVICE_PRIMARY))
+	{
+		uint32_t now = ticksGetMillis();
+
+		if ((now - lastAlertTime) > 3000U)
+		{
+			lastAlertTime = now;
+			soundSetMelody(MELODY_ACK_BEEP);
+		}
+
+		uiDataGlobal.Scan.timer.timeout = 0; // go straight back to the other VFO
+	}
+
+	return true;
+}
+#endif
 
 void uiVFOModeStopScanning(void)
 {
@@ -3284,19 +3363,7 @@ static void handleQuickMenuEvent(uiEvent_t *ev)
 					break;
 
 				case VFO_SCREEN_QUICK_MENU_DUAL_SCAN:
-					uiDataGlobal.Scan.active = true;
-					uiDataGlobal.Scan.stepTimeMilliseconds = settingsGetScanStepTimeMilliseconds();
-					uiDataGlobal.Scan.dwellTime = 135;// for Dual Watch, use a larger step time than normally scanning, and which does not synchronise with the DMR 30ms timeslots
-					uiDataGlobal.Scan.timer.timeout = uiDataGlobal.Scan.dwellTime;
-					uiDataGlobal.Scan.refreshOnEveryStep = false;
-					screenOperationMode[CHANNEL_VFO_A] = screenOperationMode[CHANNEL_VFO_B] = VFO_SCREEN_OPERATION_DUAL_SCAN;
-					uiDataGlobal.VoicePrompts.inhibitInitial = true;
-					uiDataGlobal.Scan.scanType = SCAN_TYPE_DUAL_WATCH;
-					int currentPowerSavingLevel = rxPowerSavingGetLevel();
-					if (currentPowerSavingLevel > 1)
-					{
-						rxPowerSavingSetLevel(currentPowerSavingLevel - 1);
-					}
+					dualWatchStart();
 					break;
 
 				default:
@@ -3917,6 +3984,13 @@ static void scanning(void)
 	{
 		// Test for presence of RF Carrier.
 
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+		if (dualWatchStayCheck())
+		{
+			// Dual Watch "Stay": never pause on the non-home VFO
+		}
+		else
+#endif
 		if (trxGetMode() == RADIO_MODE_DIGITAL)
 		{
 			if(uiDataGlobal.Scan.stepTimeMilliseconds > 150)				// if >150ms use DMR Slow mode

@@ -212,7 +212,7 @@ typedef struct
 	int16_t				currentChannelIndexInZone;
 	int16_t				currentChannelIndexInAllZone;
 #else // These two has to be used on any platform but RD5R and MD-9600
-	int16_t				UNUSED_1;
+	int16_t				dualWatchOptions; // see DUALWATCH_* below (was UNUSED_1, always 0 in older settings = defaults)
 	int16_t				UNUSED_2;
 #endif
 	uint16_t			aprsBeaconingSettingsPart2;
@@ -265,6 +265,19 @@ typedef struct
 #endif
 	uint8_t				lastTalkerOnScreenTimer; // in seconds, 0..30
 } settingsStruct_t;
+
+#if !(defined(PLATFORM_RD5R) || defined(PLATFORM_MD9600))
+#define HAS_DUAL_WATCH_OPTIONS 1
+// nonVolatileSettings.dualWatchOptions bits. 0 (the value stored by older firmware) is the stock behaviour.
+#define DUALWATCH_AUTOSTART     0x0001U // start Dual Watch whenever the VFO screen is (re)entered
+#define DUALWATCH_HOME_MASK     0x0006U // 0: VFO active when Dual Watch started, 1: VFO A, 2: VFO B
+#define DUALWATCH_HOME_SHIFT    1U
+#define DUALWATCH_SPEED_MASK    0x0018U // index in DUALWATCH_SPEED_TABLE
+#define DUALWATCH_SPEED_SHIFT   3U
+#define DUALWATCH_STAY          0x0020U // on RX on the other VFO: beep only, don't switch to it
+#define DUALWATCH_SPEED_TABLE   { 0U, 90U, 200U, 400U } // ms per step, 0 = use the scan step time setting
+#define DUALWATCH_NUM_SPEEDS    4U
+#endif
 
 typedef enum DMR_DESTINATION_FILTER_TYPE
 {

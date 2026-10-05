@@ -46,3 +46,39 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 - `PLANS/unify_sourcecodes.md` describes the intended merge of the MD2017/MD9600 sibling upstream trees into this one (the source already contains `PLATFORM_MD2017`/`MD9600`/`MD380` ifdefs).
 - `tools/` (under `MDUV380_firmware/`) holds the Python firmware loader, custom-data tool and `codec_cleaner.py` (uv project: `pyproject.toml`, `uv.lock`).
 - Untracked IDE files (`.project`, `.settings/`) are not part of the repo.
+
+## Saving tokens (read this before exploring)
+
+- Do not read whole files over ~1000 lines (`HR-C6000.c` 3100, `uiVFOMode.c` 4200, `uiChannelMode.c` 4000, `uiUtilities.c` 4700, `aprs.c` 2000). `grep -n` for the symbol, then `Read` with `offset`/`limit`.
+- Never read `Drivers/`, `Middlewares/`, `USB_DEVICE/`, `Core/` (vendor/CubeMX code) or `include/user_interface/languages/*.h` (20 near-identical string tables).
+- Build output is noisy: pipe `make` through `grep -E "error|warning|CLEAN"`. `#warning` lines in `AT1846S.c` and `radioHardwareInterface.c` are pre-existing.
+- The C6000 manual is at `hr-c6000/HR_C6000_translated.pdf`. Convert with `pdftotext -layout` to a scratch file and grep it (data frame types, RAM map, TX/RX procedures are in sections 5.3-5.4.5). Register notes: `hr-c6000/HR-C6000 Registers_G4EML.docx` (zip, `word/document.xml`).
+
+## Building and flashing (UV390 Plus 10W is the target radio)
+
+- Build: `cd MDUV380_firmware && make rebuild CONTAINER_ENGINE=docker PLATFORM=MDUV380 VARIANT=UV380_PLUS_10W` (use `rebuild`, not `build`, when switching variant or after header-only changes; podman is the Makefile default, docker works).
+- Flash: radio in DFU (off, hold SK1, power on, check `lsusb | grep 0483:df11`), then `python tools/opengd77_stm32_firmware_loader.py -m MD-UV380 -f build/OpenGD77_MDUV380_UV380_PLUS_10W.bin`. Needs `pyusb` (use a venv; the Makefile's default `LOADER`/`PYTHON` paths do not exist here).
+- **DMR needs the codec donor**: `donor/MD9600-CSV(2571V5)-V26.45.bin` (SHA-256 `d8a65330...f11f`, the loader rejects any other file, including the `P26.45` GPS one). It is registered in `~/.gd77firmwareloader.ini`; register again with `-s <file>` **alone** (`-s` combined with `-l` exits before saving). The loader prints `Patching for DMR` when it is used; without it the radio ends up FM-only. `donor/` is gitignored, never commit it.
+- Flashing is irreversible-ish for the running firmware; only flash when the user asks.
+
+## Messaging feature (added in this fork)
+
+- `application/source/functions/messaging.c` + `include/functions/messaging.h`: RAM-only ring buffer (16 messages, lost at power-off), canned messages, `messagingReceive()` (beep + toast), `messagingTick()` (called from the main loop, drains the DMR receive mailbox, 10 s watchdog on DMR TX), `messagingSendAPRS()`, `messagingSendDMR()`.
+- UI: `user_interface/menuMessages.c` (`MENU_MESSAGES`, Main menu "Messages", string offset 281 = `.messages`, language tag version 7). Digital channel: To = DMR ID (digits) -> DMR data call. Analog channel: To = callsign -> APRS message.
+- **APRS send**: `aprsMessageSend()` in `aprs.c` reuses the beacon path (`aprsBeaconingSendBeacon`) with a private `aprsOutgoingMessage.pending` flag; works with beaconing OFF but needs an APRS config on the channel. There is no APRS receive path.
+- **DMR receive**: `hrc6000SysReceivedDataInt()` (interrupt context) hands good data frames (types 0x6 header, 0x7/0x8/0xA blocks, read from SPI page 0x02) to `messagingDmrRxFrame()`. Only unconfirmed/confirmed data packets (DPF 2/3) addressed to our ID or current TG; no UDT/short data; text is the longest printable run (8-bit or UTF-16LE), heuristic.
+- **DMR transmit**: `HRC6000DataTxStart()` queues a job; the main loop (`applicationMain.c`, just before `hasSignal = false;`) holds a software PTT while `HRC6000DataTxIsActive()`, so the normal TX screen runs. In the slot state machine (`hrc6000TimeslotInterruptHandler`) `dataTx.inUse` bypasses the voice branches: data header x3 (reg 0x50 = 0x60), then one rate-1/2 block per active slot (0x70), no terminator. Header CRC/block CRC-32 come from the chip.
+- **Unverified on air** (as of this writing): data header type (0x60 vs 0x64), SAP value, payload format against commercial radios, RMO/repeater operation, ack handling. Treat failures there as expected-until-tested.
+
+## Gotchas
+
+- `menuFunctions[]` and `menusData.data[]` in `menuSystem.c` must stay in the same order as `enum MENU_SCREENS`; quickkey menus go above the "Add new menus" comment (max 32).
+- Adding a language string = new field at the end of `stringsTable_t` + a line in every language file + bump `LANGUAGE_TAG_VERSION` (language packs flashed separately must be rebuilt).
+- Language/source files in `languages/` are Windows-1252: edit them as bytes, not UTF-8.
+- `aprsBeaconingSendBeacon()` and everything under `aprs.c` runs in the UI task and calls `vTaskDelay`; do not call from interrupt context.
+
+## Dual Watch options (this fork)
+
+- Options -> "Dual Watch" (`menuDualWatchOptions.c`, `MENU_DUAL_WATCH`, reuses language string 143 so no language-file change). Stored in `nonVolatileSettings.dualWatchOptions` (the old `UNUSED_1`, 0 = stock behaviour, no settings reset); bit layout and `DUALWATCH_*` macros in `settings.h`.
+- Options: Auto start (starts at every VFO screen entry, also after TX), Home VFO, Speed (default / 90 / 200 / 400 ms), On RX Switch/Stay. Logic is in `uiVFOMode.c`: `dualWatchStart()` (shared with the VFO quick menu), `dualWatchStayCheck()` (called first in `scanning()`).
+- Stay = on the non-home VFO a carrier only gives a rate-limited beep and the scan hops back; there is no real simultaneous receive (single AT1846S on MDUV380) and no priority pre-emption while paused on a signal.

@@ -94,6 +94,9 @@ menuDataGlobal_t menuDataGlobal =
 #if !defined(PLATFORM_GD77S)
 				NULL,// Messages
 #endif
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+				NULL,// Dual Watch options
+#endif
 				// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 				NULL,// MessageBox
 				NULL,// hotspot mode
@@ -155,6 +158,9 @@ static menuFunctionData_t menuFunctions[] =
 		{ menuResetCustomData,      NULL, NULL, 0 },
 #if !defined(PLATFORM_GD77S)
 		{ menuMessages,             NULL, NULL, 0 },
+#endif
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+		{ menuDualWatchOptions,     NULL, NULL, 0 },
 #endif
 		// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 		{ uiMessageBox,             NULL, NULL, 0 },
@@ -704,6 +710,9 @@ static const menuItemNewData_t optionsMenuItems[] =
 #endif
 #if !defined(PLATFORM_GD77S)
 	{ 257, MENU_APRS            },
+#endif
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+	{ 143, MENU_DUAL_WATCH },// stringOffset 143 = .dual_watch field
 #endif
 	{ 280, MENU_RESET_CUSTOM_DATA },// stringOffset 280 = .reset_configuration field (added at end of stringsTable_t)
 };

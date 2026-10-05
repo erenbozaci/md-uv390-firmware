@@ -324,6 +324,9 @@ enum MENU_SCREENS
 #if !defined(PLATFORM_GD77S)
 	MENU_MESSAGES,
 #endif
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+	MENU_DUAL_WATCH,
+#endif
 	// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 	UI_MESSAGE_BOX,
 	UI_HOTSPOT_MODE,
@@ -471,6 +474,7 @@ menuStatus_t menuContactDetails(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuLanguage(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuResetCustomData(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuMessages(uiEvent_t *event, bool isFirstRun);
+menuStatus_t menuDualWatchOptions(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuPrivateCall(uiEvent_t *event, bool isFirstRun);
 menuStatus_t uiMessageBox(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuSatelliteScreen(uiEvent_t *ev, bool isFirstRun);
