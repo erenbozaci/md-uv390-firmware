@@ -37,7 +37,7 @@
 enum
 {
 	DW_OPT_DUAL_SCREEN = 0,
-	DW_OPT_AUTOSTART,
+	DW_OPT_WATCH,
 	DW_OPT_SIDE_B,
 	DW_OPT_HOME,
 	DW_OPT_SPEED,
@@ -90,57 +90,94 @@ menuStatus_t menuDualWatchOptions(uiEvent_t *ev, bool isFirstRun)
 	return menuDualWatchExitCode;
 }
 
+// Setting names (full words, a value follows after the colon), and what the selected setting does for the bottom row
+static const char *const optionNames[NUM_DW_OPTIONS] = { "Dual screen", "Row watch", "2nd side", "Home", "Speed", "On signal" };
+
+static const char *optionHelp(int option)
+{
+	switch (option)
+	{
+		case DW_OPT_DUAL_SCREEN:
+			return "A/B rows on home";
+
+		case DW_OPT_WATCH:
+			return "Peek at other row";
+
+		case DW_OPT_SIDE_B:
+			return "VFO B or a channel";
+
+		case DW_OPT_HOME:
+			return "Side kept in Stay";
+
+		case DW_OPT_SPEED:
+			return "Time spent per side";
+
+		default:
+			return ((options() & DUALWATCH_STAY) ? "Beep, stay on home" : "Goes to a signal");
+	}
+}
+
+static const char *optionValue(int option)
+{
+	const uint16_t o = options();
+
+	switch (option)
+	{
+		case DW_OPT_DUAL_SCREEN:
+			return ((o & DUALWATCH_DUAL_SCREEN) ? currentLanguage->on : currentLanguage->off);
+
+		case DW_OPT_WATCH:
+			return ((o & DUALWATCH_WATCH) ? currentLanguage->on : currentLanguage->off);
+
+		case DW_OPT_SIDE_B:
+			return ((o & DUALWATCH_CHANNEL_B) ? "Channel" : "VFO B");
+
+		case DW_OPT_HOME:
+			return homeNames[(o & DUALWATCH_HOME_MASK) >> DUALWATCH_HOME_SHIFT];
+
+		case DW_OPT_SPEED:
+			return speedNames[(o & DUALWATCH_SPEED_MASK) >> DUALWATCH_SPEED_SHIFT];
+
+		default:
+			return ((o & DUALWATCH_STAY) ? "Stay" : "Switch");
+	}
+}
+
+// A plain list (no wrap around, so no empty row) with the value in the options colour, like the other options menus.
+// The last row of the screen says what the selected setting does.
 static void updateScreen(bool isFirstRun)
 {
 	char buf[SCREEN_LINE_BUFFER_SIZE];
+	const int rows = (MENU_END_ITERATION_VALUE - MENU_START_ITERATION_VALUE + 1);
+	const int visible = (rows - 1);
+	int first = (menuDataGlobal.currentItemIndex - (visible - 1));
 
 	(void)isFirstRun;
 
-	displayClearBuf();
-	menuDisplayTitle(currentLanguage->dual_watch);
-
-	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
+	if (first > (NUM_DW_OPTIONS - visible))
 	{
-		int mNum = menuGetMenuOffset(NUM_DW_OPTIONS, i);
-
-		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY)
-		{
-			continue;
-		}
-		else if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)
-		{
-			break;
-		}
-
-		switch (mNum)
-		{
-			case DW_OPT_DUAL_SCREEN:
-				snprintf(buf, sizeof(buf), "Dual scr:%s", ((options() & DUALWATCH_DUAL_SCREEN) ? currentLanguage->on : currentLanguage->off));
-				break;
-
-			case DW_OPT_AUTOSTART:
-				snprintf(buf, sizeof(buf), "Auto:%s", ((options() & DUALWATCH_AUTOSTART) ? currentLanguage->on : currentLanguage->off));
-				break;
-
-			case DW_OPT_SIDE_B:
-				snprintf(buf, sizeof(buf), "Side B:%s", ((options() & DUALWATCH_CHANNEL_B) ? "Channel" : "VFO B"));
-				break;
-
-			case DW_OPT_HOME:
-				snprintf(buf, sizeof(buf), "Home:%s", homeNames[(options() & DUALWATCH_HOME_MASK) >> DUALWATCH_HOME_SHIFT]);
-				break;
-
-			case DW_OPT_SPEED:
-				snprintf(buf, sizeof(buf), "Speed:%s", speedNames[(options() & DUALWATCH_SPEED_MASK) >> DUALWATCH_SPEED_SHIFT]);
-				break;
-
-			default:
-				snprintf(buf, sizeof(buf), "On RX:%s", ((options() & DUALWATCH_STAY) ? "Stay" : "Switch"));
-				break;
-		}
-
-		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
+		first = (NUM_DW_OPTIONS - visible);
 	}
+	if (first < 0)
+	{
+		first = 0;
+	}
+
+	displayClearBuf();
+	menuDisplayTitle("DW Options");
+
+	for (int r = 0; (r < visible) && ((first + r) < NUM_DW_OPTIONS); r++)
+	{
+		const int item = (first + r);
+
+		snprintf(buf, sizeof(buf), "%s:%s", optionNames[item], optionValue(item));
+		menuDisplayEntry((MENU_START_ITERATION_VALUE + r), item, buf, (strlen(optionNames[item]) + 1), THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+	}
+
+	displayThemeApply(THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+	displayPrintCore(0, (DISPLAY_Y_POS_MENU_ENTRY_HIGHLIGHT + ((MENU_START_ITERATION_VALUE + visible) * MENU_ENTRY_HEIGHT) + 4),
+			optionHelp(menuDataGlobal.currentItemIndex), FONT_SIZE_2, TEXT_ALIGN_CENTER, false);
+	displayThemeResetToDefault();
 
 	displayRender();
 }
@@ -161,8 +198,8 @@ static void changeOption(bool up)
 			o ^= DUALWATCH_DUAL_SCREEN;
 			break;
 
-		case DW_OPT_AUTOSTART:
-			o ^= DUALWATCH_AUTOSTART;
+		case DW_OPT_WATCH:
+			o ^= DUALWATCH_WATCH;
 			break;
 
 		case DW_OPT_SIDE_B:

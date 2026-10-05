@@ -34,6 +34,7 @@
 #include "user_interface/uiLocalisation.h"
 #include "functions/trx.h"
 #include "functions/sound.h"
+#include "functions/rxPowerSaving.h"
 
 #if defined(HAS_DUAL_WATCH_OPTIONS)
 
@@ -146,13 +147,214 @@ static bool receiving(void)
 	return ((audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) != 0);
 }
 
+// ---- Row watch ---------------------------------------------------------------------------------------------
+// With one receiver the other row can only be heard by tuning to it for a moment. Every WATCH_PEEK_INTERVAL_MS the radio
+// looks at the other row for WATCH_PEEK_DWELL_MS: no carrier, and it goes straight back. With a carrier it waits for audio
+// (it can be a carrier with the wrong tone) and then listens until the audio has been gone for the Scan delay, and returns.
+// The active row never changes, so PTT always goes where the user selected. Analog rows only for now (a DMR row needs its
+// colour code, slot and talkgroup set up to be heard): nothing is done while the active row is DMR, and DMR rows are skipped.
+#define WATCH_PEEK_INTERVAL_MS   1500U
+#define WATCH_PEEK_DWELL_MS      80U
+#define WATCH_VERIFY_MS          500U
+#define WATCH_BACKOFF_MS         10000U // a carrier that gave no audio: leave that row alone for a while
+
+typedef enum
+{
+	WATCH_IDLE = 0,
+	WATCH_PEEK,
+	WATCH_VERIFY,
+	WATCH_LISTEN
+} watchState_t;
+
+static watchState_t watchState = WATCH_IDLE;
+static uint32_t watchTime;         // when the current state started
+static uint32_t watchBackoffUntil;
+static uint32_t savedRx;
+static uint32_t savedTx;
+static int savedMode;
+static int savedDmrMode;
+static bool savedBw25;
+static uint16_t savedRxTone;
+static bool lastListening;
+
+static bool receivingNow(void)
+{
+	return ((audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) != 0);
+}
+
+static void watchRestoreRadio(void)
+{
+	trxSetSquelchOverride(false, 0, 0);
+	trxSetFrequency(savedRx, savedTx, savedDmrMode);
+	trxSetModeAndBandwidth(savedMode, savedBw25);
+	trxSetRxCSS(RADIO_DEVICE_PRIMARY, savedRxTone);
+}
+
+static void watchGoIdle(uint32_t now)
+{
+	trxSetSquelchOverride(false, 0, 0);
+	watchState = WATCH_IDLE;
+	watchTime = now;
+}
+
+// Channel data of the row that is not active, false when it can not be used
+static bool otherRowData(CodeplugChannel_t *out)
+{
+	const int other = (1 - activeLine());
+	CodeplugZone_t zone;
+
+	if (lineIsChannel(other) == false)
+	{
+		memcpy(out, &settingsVFOChannel[other], sizeof(CodeplugChannel_t));
+		return (out->rxFreq != 0U);
+	}
+
+	if ((codeplugZoneGetDataForNumber(zoneOfLine(other), &zone) == false) || (zone.NOT_IN_CODEPLUGDATA_numChannelsInZone <= 0))
+	{
+		return false;
+	}
+
+	int16_t chNumber = channelNumberForIndex(&zone, validIndexInZone(&zone, slotIndex[other]));
+
+	if (chNumber < 1)
+	{
+		return false;
+	}
+
+	codeplugChannelGetDataForIndex(chNumber, out);
+	return (out->rxFreq != 0U);
+}
+
+static bool watchAllowed(void)
+{
+	int menu = menuSystemGetCurrentMenuNumber();
+
+	return (uiDualScreenIsEnabled() && ((opts() & DUALWATCH_WATCH) != 0U) &&
+			((menu == UI_VFO_MODE) || (menu == UI_CHANNEL_MODE)) &&
+			(uiDataGlobal.Scan.active == false) && (trxTransmissionEnabled == false) && (trxIsTransmitting == false) &&
+			(uiDataGlobal.FreqEnter.index == 0) && (uiDataGlobal.displayChannelSettings == false) &&
+			(trxGetMode() == RADIO_MODE_ANALOG) && rxPowerSavingIsRxOn() && (aprsBeaconingIsTransmitting() == false));
+}
+
+bool uiDualScreenWatchIsTunedAway(void)
+{
+	return (watchState != WATCH_IDLE);
+}
+
+bool uiDualScreenWatchIsPeeking(void)
+{
+	return (watchState == WATCH_PEEK);
+}
+
+void uiDualScreenWatchAbort(void)
+{
+	if (watchState != WATCH_IDLE)
+	{
+		watchRestoreRadio();
+	}
+	watchGoIdle(ticksGetMillis());
+}
+
+void uiDualScreenWatchTick(void)
+{
+	const uint32_t now = ticksGetMillis();
+
+	if (watchAllowed() == false)
+	{
+		if (watchState != WATCH_IDLE)
+		{
+			uiDualScreenWatchAbort();
+		}
+		return;
+	}
+
+	switch (watchState)
+	{
+		case WATCH_IDLE:
+			if (((now - watchTime) >= WATCH_PEEK_INTERVAL_MS) && (((int32_t)(now - watchBackoffUntil)) >= 0) && (receivingNow() == false))
+			{
+				CodeplugChannel_t other;
+
+				watchTime = now;
+
+				if (otherRowData(&other) && (other.chMode == RADIO_MODE_ANALOG))
+				{
+					// What the radio is doing now, to put it back
+					savedRx = currentRadioDevice->currentRxFrequency;
+					savedTx = currentRadioDevice->currentTxFrequency;
+					savedMode = trxGetMode();
+					savedBw25 = trxGetBandwidthIs25kHz();
+					savedDmrMode = currentRadioDevice->trxDMRModeRx;
+					savedRxTone = currentChannelData->rxTone;
+
+					rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE); // keep the receiver on while looking
+					trxSetSquelchOverride(true, other.sql, other.rxTone); // squelch and tone of the other row, not the active one's
+					trxSetFrequency(other.rxFreq, other.txFreq, DMR_MODE_AUTO);
+					trxSetModeAndBandwidth(RADIO_MODE_ANALOG, (codeplugChannelGetFlag(&other, CHANNEL_FLAG_BW_25K) != 0));
+					trxSetRxCSS(RADIO_DEVICE_PRIMARY, other.rxTone);
+					watchState = WATCH_PEEK;
+				}
+			}
+			break;
+
+		case WATCH_PEEK:
+			if ((now - watchTime) >= WATCH_PEEK_DWELL_MS)
+			{
+				if (trxCarrierDetected(RADIO_DEVICE_PRIMARY))
+				{
+					watchState = WATCH_VERIFY;
+					watchTime = now;
+				}
+				else
+				{
+					watchRestoreRadio();
+					watchGoIdle(now);
+				}
+			}
+			break;
+
+		case WATCH_VERIFY:
+			if (receivingNow())
+			{
+				watchState = WATCH_LISTEN;
+				watchTime = now;
+			}
+			else if ((now - watchTime) >= WATCH_VERIFY_MS)
+			{
+				watchRestoreRadio();
+				watchBackoffUntil = (now + WATCH_BACKOFF_MS);
+				watchGoIdle(now);
+			}
+			break;
+
+		case WATCH_LISTEN:
+			if (receivingNow())
+			{
+				watchTime = now; // still there
+			}
+			else
+			{
+				uint32_t hang = ((uint32_t)nonVolatileSettings.scanDelay * 1000U);
+
+				if ((now - watchTime) >= ((hang > 500U) ? hang : 500U))
+				{
+					watchRestoreRadio();
+					watchGoIdle(now);
+				}
+			}
+			break;
+	}
+}
+
 bool uiDualScreenRxStateChanged(void)
 {
 	static bool lastReceiving = false;
-	bool now = receiving();
-	bool changed = ((now != lastReceiving) && uiDualScreenIsEnabled());
+	bool now = (receiving() && (watchState == WATCH_IDLE)); // the watch's own audio is not a signal on the active row
+	bool listening = (watchState == WATCH_LISTEN);
+	bool changed = (((now != lastReceiving) || (listening != lastListening)) && uiDualScreenIsEnabled());
 
 	lastReceiving = now;
+	lastListening = listening;
 	return changed;
 }
 
@@ -352,7 +554,8 @@ static void drawRow(int line, int16_t y, bool active)
 		}
 
 		// Signal received on the active row
-		if (active && receiving())
+		// the signal is on the active row, or on the other one while the row watch listens to it
+		if (active ? (receiving() && (watchState == WATCH_IDLE)) : (watchState == WATCH_LISTEN))
 		{
 			drawBadge((int16_t)(DISPLAY_SIZE_X - (DISPLAY_X_POS_MENU_OFFSET + 2) - ((2 * 8) + 4)), y, "RX", COL_RX_FG, COL_RX_BG, card);
 		}
@@ -438,6 +641,8 @@ static void restorePassiveRow(void)
 
 void uiDualScreenScreenEntered(bool channelScreen)
 {
+	watchGoIdle(ticksGetMillis()); // entering a screen has just tuned the radio: nothing to put back
+
 	if (uiDualScreenIsEnabled() == false)
 	{
 		return;

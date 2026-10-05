@@ -37,6 +37,10 @@ bool uiDualScreenIsEnabled(void);
 bool uiDualScreenCanDraw(void);                    // option on and a quiet screen state (no TX, no channel details...)
 void uiDualScreenDraw(void);                       // the two rows, A on top and B below
 void uiDualScreenScreenEntered(bool channelScreen); // call when the VFO / channel screen is (re)entered
+void uiDualScreenWatchTick(void);                  // row watch, call from the main loop
+void uiDualScreenWatchAbort(void);                 // back to the active row now (before a transmission)
+bool uiDualScreenWatchIsTunedAway(void);           // the radio is on the other row right now
+bool uiDualScreenWatchIsPeeking(void);             // within the short look at the other row (the squelch must not run)
 bool uiDualScreenRxStateChanged(void);             // true when a signal started / stopped being received: the screen has to be redrawn
 // Up/Down arrows select the other row, the red key switches the active row between VFO and channel.
 // Returns true when the key has been used. 'busy' = the screen is doing something else (entering digits...).

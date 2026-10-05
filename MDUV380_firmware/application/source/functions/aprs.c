@@ -33,6 +33,7 @@
 #include "functions/settings.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
+#include "user_interface/uiDualScreen.h"
 #include "interfaces/clockManager.h"
 #include "functions/rxPowerSaving.h"
 
@@ -1503,6 +1504,12 @@ aprsBeaconingMode_t aprsBeaconingGetMode(void)
 bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 {
 	aprsChannelSettingsInUse_t channelSettings;
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+	if (uiDualScreenWatchIsTunedAway())
+	{
+		uiDualScreenWatchAbort(); // the radio must be on the active row before anything is transmitted
+	}
+#endif
 	const bool isMessage = aprsOutgoingMessage.pending; // An APRS message is sent as a manual beacon, even if beaconing is OFF
 	const aprsBeaconingMode_t beaconingMode = (isMessage ? APRS_BEACONING_MODE_MANUAL : aprsBcnData.settings.mode);
 

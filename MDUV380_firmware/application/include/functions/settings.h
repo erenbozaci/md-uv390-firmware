@@ -269,7 +269,7 @@ typedef struct
 #if !(defined(PLATFORM_RD5R) || defined(PLATFORM_MD9600))
 #define HAS_DUAL_WATCH_OPTIONS 1
 // nonVolatileSettings.dualWatchOptions bits. 0 (the value stored by older firmware) is the stock behaviour.
-#define DUALWATCH_AUTOSTART     0x0001U // start Dual Watch whenever the VFO screen is (re)entered
+#define DUALWATCH_AUTOSTART     0x0001U // unused now (was: start Dual Watch whenever the VFO screen is entered), bit kept reserved
 #define DUALWATCH_HOME_MASK     0x0006U // 0: VFO active when Dual Watch started, 1: VFO A, 2: VFO B, 3: the channel (needs DUALWATCH_CHANNEL_B)
 #define DUALWATCH_HOME_SHIFT    1U
 #define DUALWATCH_SPEED_MASK    0x0018U // index in DUALWATCH_SPEED_TABLE
@@ -282,6 +282,7 @@ typedef struct
 #define DUALWATCH_ACTIVE_B      0x0400U // dual screen: row B is the active one
 #define DUALWATCH_SLOT_BIT16    0x0800U // dual screen: bit 16 of the saved slot (nonVolatileSettings.dualScreenSlot holds the low 16 bits)
 #define DUALWATCH_SLOT_VALID    0x1000U // dual screen: the saved slot of the non active channel row is valid
+#define DUALWATCH_WATCH         0x2000U // dual screen: now and then listen to the other row (row watch)
 #define DUALWATCH_SPEED_TABLE   { 0U, 90U, 200U, 400U } // ms per step, 0 = use the scan step time setting
 #define DUALWATCH_NUM_SPEEDS    4U
 #endif

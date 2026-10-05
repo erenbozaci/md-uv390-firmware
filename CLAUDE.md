@@ -80,8 +80,8 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 ## Dual Watch options (this fork)
 
 - Options -> "Dual Watch" (`menuDualWatchOptions.c`, `MENU_DUAL_WATCH`, reuses language string 143 so no language-file change). Stored in `nonVolatileSettings.dualWatchOptions` (the old `UNUSED_1`, 0 = stock behaviour, no settings reset); bit layout and `DUALWATCH_*` macros in `settings.h`.
-- Options: Auto start (starts at every VFO screen entry, also after TX), Home VFO, Speed (default / 90 / 200 / 400 ms), On RX Switch/Stay. Logic is in `uiVFOMode.c`: `dualWatchStart()` (shared with the VFO quick menu), `dualWatchStayCheck()` (called first in `scanning()`).
-- Stay = on the non-home VFO a carrier only gives a rate-limited beep and the scan hops back; there is no real simultaneous receive (single AT1846S on MDUV380) and no priority pre-emption while paused on a signal.
+- Options (menu labels): Dual screen, 2nd side (VFO B or zone channel), Home side, Scan speed (default / 90 / 200 / 400 ms), On signal (Switch / Stay). Logic is in `uiVFOMode.c`: `dualWatchStart()` (shared with the VFO quick menu), `dualWatchStayCheck()` (called first in `scanning()`).
+- On signal = Switch: the scan stops on a signal on either side and listens (stock), then carries on. Stay (`DUALWATCH_STAY`): on the side that is not the home side a carrier only gives a rate limited beep and the scan hops straight back, it never listens there. A "home side priority" variant (long dwell on the home side, short looks at the other) was written and dropped: with two sides the scan returns to the other side anyway after a signal, so Switch already does that. There is no real simultaneous receive (single AT1846S on MDUV380).
 
 ## Screenshots / verifying the UI on the real radio
 
@@ -111,3 +111,9 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 - Soft key bar at the bottom like the home screen's `Menu`: green key action on the left, red key action on the right (`Select`/`Back`, `Reply`/`Back`, `Send`/`Back`), optional muted hint in the middle (`uiWidgetsSoftKeys()`).
 - `uiWidgets.c/.h`: shared colour helpers (palette light/dark chosen from the theme background, text helpers, soft key bar). `uiDualScreen.c` still has its own badge/text helpers (written first): merge them into the widgets when touching it.
 - `DEMO_MESSAGES=1 ./uv390.sh build` seeds five sample messages at boot (`MESSAGES_DEMO`) to look at the list / view screens. Never flash or release a demo build; rebuild normally afterwards.
+
+## Row watch (dual screen, background)
+
+- Options -> Dual Watch -> "Row watch: On" (`DUALWATCH_WATCH`, needs "Dual screen"). `uiDualScreenWatchTick()` (called every loop from `applicationMain.c`) tunes the single receiver to the other row for 80 ms every 1.5 s (`WATCH_PEEK_*` in `uiDualScreen.c`), no carrier: puts the radio back; carrier: waits up to 500 ms for audio (a carrier with the wrong tone is ignored for 10 s) and listens until the audio has been gone for the Scan delay, then returns. The active row never changes (PTT always transmits on it; `uiDualScreenWatchAbort()` retunes before the TX screen is pushed); the heard row gets the `RX` badge.
+- Analog rows only for now: nothing happens while the active row is DMR, DMR rows are skipped (a DMR row needs colour code / slot / talkgroup set up to be heard). Keys do not stop it (unlike the old Dual Watch scan). The old scan (VFO quick menu, "Auto start", "On signal", ...) is unchanged and separate.
+- The radio state to restore is captured from `currentRadioDevice` (rx / tx frequency, DMR mode), `trxGetMode()`, `trxGetBandwidthIs25kHz()` and `currentChannelData->rxTone`.

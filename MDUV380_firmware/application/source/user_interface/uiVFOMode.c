@@ -285,15 +285,6 @@ menuStatus_t uiVFOMode(uiEvent_t *ev, bool isFirstRun)
 			uiDataGlobal.VoicePrompts.inhibitInitial = false;
 		}
 
-#if defined(HAS_DUAL_WATCH_OPTIONS)
-		// "Auto start" Dual Watch option (also resumes it after a transmission)
-		if ((((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_AUTOSTART) && (uiDataGlobal.Scan.active == false) &&
-				(screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_NORMAL))
-		{
-			dualWatchStart();
-		}
-#endif
-
 		menuVFOExitStatus = MENU_STATUS_SUCCESS;
 	}
 	else

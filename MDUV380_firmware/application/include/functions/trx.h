@@ -144,6 +144,7 @@ int trxGetDMRTimeSlot(void);
 void trxSetDMRTimeSlot(int timeslot, bool resync);
 void trxSetTxCSS(uint16_t tone);
 void trxSetRxCSS(RadioDevice_t deviceId, uint16_t tone);
+void trxSetSquelchOverride(bool enabled, uint8_t sql, uint16_t rxTone); // squelch level and tone to use instead of currentChannelData's (row watch)
 bool trxCheckCSSFlag(uint16_t tone);
 bool trxCheckFrequencyInAmateurBand(uint32_t frequency);
 uint32_t trxGetBandFromFrequency(uint32_t frequency);

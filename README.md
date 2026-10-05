@@ -17,7 +17,8 @@ R20260131 source release:
 | Feature | What it does | Status |
 |---|---|---|
 | **Dual screen (Anytone style)** | Two independent rows, A on top and B below. Each row is either a VFO or a channel with its **own zone**. Up/Down select the row, the red key switches the active row between VFO and channel, the rotary changes the frequency / channel. Coloured badges (`C004`, `DMR`/`ANA`), `RX` badge while receiving, `Menü` label. | Working, tested on the radio |
-| **Dual Watch options** | Options → Dual Watch: auto start, speed, home VFO, "stay" (beep instead of switching to a signal on the other side), second side can be a zone channel. | Implemented, only partly tested |
+| **Row watch** | With the dual screen, the radio looks at the other row every 1.5 s. A signal there is heard (an `RX` badge shows on that row) and the radio returns to the active row when it ends; PTT always transmits on the active row. Analog rows only for now. | Implemented, untested on air |
+| **Dual Watch options** | Options → Dual Watch (screen title "DW Options"): scan speed, home side, "Switch" (stop and listen on a signal on either side) or "Stay" (never leave the home side, a beep tells you that the other side is active), second side can be a zone channel. | Implemented, only partly tested |
 | **Messages** | Inbox, compose, canned messages, new-message beep. | Implemented, lightly tested |
 | **APRS messages** | Send `:CALLSIGN :text{id` through the existing AFSK encoder (analog channels). No APRS receive. | Implemented, needs an APRS config on the channel |
 | **DMR SMS** | Receive and send private text messages (DMR data call driven by the HR-C6000, following the chip manual). | **Experimental, never tested on air** |
