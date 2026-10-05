@@ -154,6 +154,7 @@ static bool receiving(void)
 // The active row never changes, so PTT always goes where the user selected. Analog rows only for now (a DMR row needs its
 // colour code, slot and talkgroup set up to be heard): nothing is done while the active row is DMR, and DMR rows are skipped.
 #define WATCH_PEEK_INTERVAL_MS   1500U
+#define WATCH_QUIET_MS           3000U // no peek until the active row has been quiet this long (pauses in speech, squelch tail)
 #define WATCH_PEEK_DWELL_MS      80U
 #define WATCH_VERIFY_MS          500U
 #define WATCH_BACKOFF_MS         10000U // a carrier that gave no audio: leave that row alone for a while
@@ -169,6 +170,7 @@ typedef enum
 static watchState_t watchState = WATCH_IDLE;
 static uint32_t watchTime;         // when the current state started
 static uint32_t watchBackoffUntil;
+static uint32_t watchLastBusy;     // last time the active row had audio or a carrier
 static uint32_t savedRx;
 static uint32_t savedTx;
 static int savedMode;
@@ -271,7 +273,17 @@ void uiDualScreenWatchTick(void)
 	switch (watchState)
 	{
 		case WATCH_IDLE:
-			if (((now - watchTime) >= WATCH_PEEK_INTERVAL_MS) && (((int32_t)(now - watchBackoffUntil)) >= 0) && (receivingNow() == false))
+			if (receivingNow())
+			{
+				watchLastBusy = now;
+			}
+			else if (((now - watchTime) >= WATCH_PEEK_INTERVAL_MS) && (trxCarrierDetected(RADIO_DEVICE_PRIMARY)))
+			{
+				watchLastBusy = now;
+			}
+
+			if (((now - watchTime) >= WATCH_PEEK_INTERVAL_MS) && ((now - watchLastBusy) >= WATCH_QUIET_MS) &&
+					(((int32_t)(now - watchBackoffUntil)) >= 0))
 			{
 				CodeplugChannel_t other;
 
