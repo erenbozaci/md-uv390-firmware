@@ -27,3 +27,7 @@ __pycache__/
 
 # Proprietary donor firmware used for codec patching - never commit
 /donor/
+
+# Local Python venv used by uv390.sh and screenshots
+/.venv/
+/screen*.png

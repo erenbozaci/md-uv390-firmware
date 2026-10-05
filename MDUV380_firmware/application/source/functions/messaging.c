@@ -43,6 +43,7 @@
 
 static messagingEntry_t messages[MESSAGING_MAX_MESSAGES];
 static uint32_t messagesCount = 0;
+static uint32_t nextSeq = 1;
 
 // ---- DMR data receive -------------------------------------------------------------------------
 // Frame types as reported by HR-C6000 register 0x51[7:4] (HR-C6000 manual, table 5.5)
@@ -62,6 +63,7 @@ typedef struct
 	uint32_t src;
 	uint32_t dst;
 	bool     group;
+	uint8_t  pad;      // pad octet count from the header (bytes at the end of the data to ignore)
 	uint16_t len;
 	uint8_t  data[DMR_RX_MAX_BYTES];
 } dmrRxMessage_t;
@@ -92,6 +94,7 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 		}
 
 		dmrRx.msg.group = ((data[0] & 0x80) != 0);
+		dmrRx.msg.pad = (data[1] & 0x0F);
 		dmrRx.msg.dst = ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 8) | data[4];
 		dmrRx.msg.src = ((uint32_t)data[5] << 16) | ((uint32_t)data[6] << 8) | data[7];
 
@@ -129,7 +132,12 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 			if ((dmrRx.msg.len > DMR_RX_CRC32_LEN) && (dmrRxMailboxReady == false))
 			{
 				dmrRx.msg.len -= DMR_RX_CRC32_LEN;
+				if (dmrRx.msg.pad < dmrRx.msg.len)
+				{
+					dmrRx.msg.len -= dmrRx.msg.pad;
+				}
 				memcpy(&dmrRxMailbox, &dmrRx.msg, sizeof(dmrRxMailbox));
+				__DMB(); // the message must be fully written before the main loop sees the flag
 				dmrRxMailboxReady = true;
 			}
 		}
@@ -210,6 +218,7 @@ void messagingTick(void)
 
 	if (dmrRxMailboxReady)
 	{
+		__DMB(); // flag read before the message data
 		char peer[MESSAGING_PEER_LEN];
 		char text[MESSAGING_TEXT_LEN];
 
@@ -260,6 +269,7 @@ static void messagingAdd(messagingTransport_t transport, const char *peer, const
 	messagingCopyUpper(e->peer, sizeof(e->peer), peer);
 	strncpy(e->text, text, (sizeof(e->text) - 1U));
 	e->time = (uint32_t)uiDataGlobal.dateTimeSecs;
+	e->seq = nextSeq++;
 	e->transport = (uint8_t)transport;
 	e->outgoing = outgoing;
 	e->unread = (outgoing == false);
@@ -294,6 +304,22 @@ uint32_t messagingGetUnreadCount(void)
 messagingEntry_t *messagingGetEntry(uint32_t index)
 {
 	return ((index < messagesCount) ? &messages[index] : NULL);
+}
+
+messagingEntry_t *messagingGetEntryBySeq(uint32_t seq, uint32_t *index)
+{
+	for (uint32_t i = 0; i < messagesCount; i++)
+	{
+		if (messages[i].seq == seq)
+		{
+			if (index != NULL)
+			{
+				*index = i;
+			}
+			return &messages[i];
+		}
+	}
+	return NULL;
 }
 
 void messagingMarkRead(uint32_t index)
@@ -369,7 +395,11 @@ bool messagingSendDMR(uint32_t dstId, const char *text)
 
 bool messagingSendAPRS(const char *peer, const char *text)
 {
-	if (aprsMessageSend(peer, text))
+	char upperPeer[MESSAGING_PEER_LEN];
+
+	messagingCopyUpper(upperPeer, sizeof(upperPeer), peer); // APRS addressees are upper case
+
+	if (aprsMessageSend(upperPeer, text))
 	{
 		messagingAdd(MESSAGING_TRANSPORT_APRS, peer, text, true);
 		return true;

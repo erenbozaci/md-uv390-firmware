@@ -60,7 +60,7 @@ enum
 static menuStatus_t menuMessagesExitCode = MENU_STATUS_SUCCESS;
 static messagesState_t state;
 static int listItemIndex;     // remembered list position while viewing / composing
-static uint32_t viewIndex;    // message index (0 = newest)
+static uint32_t viewSeq;      // sequence number of the viewed message (indices shift when a message arrives)
 static int viewScroll;        // first visible text row in VIEW
 static char composeTo[MESSAGING_PEER_LEN];
 static char composeText[MESSAGING_TEXT_LEN];
@@ -241,7 +241,7 @@ static void updateScreen(bool isFirstRun)
 
 		case STATE_VIEW:
 			{
-				const messagingEntry_t *e = messagingGetEntry(viewIndex);
+				const messagingEntry_t *e = messagingGetEntryBySeq(viewSeq, NULL);
 
 				if (e == NULL)
 				{
@@ -509,9 +509,11 @@ static void handleEvent(uiEvent_t *ev)
 				}
 				else
 				{
-					viewIndex = (listItemIndex - 1);
+					const messagingEntry_t *opened = messagingGetEntry(listItemIndex - 1);
+
+					viewSeq = ((opened != NULL) ? opened->seq : 0U);
 					viewScroll = 0;
-					messagingMarkRead(viewIndex);
+					messagingMarkRead(listItemIndex - 1);
 					state = STATE_VIEW;
 				}
 				updateScreen(false);
@@ -524,7 +526,8 @@ static void handleEvent(uiEvent_t *ev)
 
 		case STATE_VIEW:
 			{
-				const messagingEntry_t *e = messagingGetEntry(viewIndex);
+				uint32_t viewIndex = 0;
+				const messagingEntry_t *e = messagingGetEntryBySeq(viewSeq, &viewIndex);
 
 				if (e == NULL)
 				{

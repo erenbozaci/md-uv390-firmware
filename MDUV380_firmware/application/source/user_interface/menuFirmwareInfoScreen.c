@@ -50,7 +50,10 @@ static const char *creditTexts[] =
 #if defined(PLATFORM_RD5R)
 		"Dzmitry EW1ADG",
 #endif
-		"Jason VK7ZJA (SK)"
+		"Jason VK7ZJA (SK)",
+#if defined(PLATFORM_VARIANT_UV380_PLUS_10W)
+		"Eren TA3BZC"
+#endif
 };
 static const int maxCredits = (sizeof(creditTexts) / sizeof(creditTexts[0]));
 static const int maxCreditsPages = (maxCredits / maxDisplayedCreditsLines) + ((maxCredits % maxDisplayedCreditsLines) == 0 ? 0 : 1);

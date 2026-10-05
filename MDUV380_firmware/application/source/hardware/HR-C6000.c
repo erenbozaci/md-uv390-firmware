@@ -1527,7 +1527,7 @@ bool HRC6000DataTxStart(uint32_t dstId, const uint8_t *payload, uint16_t len)
 	dataTx.numBlocks = numBlocks;
 
 	dataTx.header[0] = 0x02;                          // Individual, no response requested, DPF 2: unconfirmed data
-	dataTx.header[1] = (DMR_DATA_SAP << 4);           // SAP, pad octet count = 0
+	dataTx.header[1] = ((DMR_DATA_SAP << 4) | (((numBlocks * DMR_DATA_BLOCK_LEN) - 4U - len) & 0x0FU)); // SAP, pad octet count (unused bytes of the last block)
 	dataTx.header[2] = ((dstId >> 16) & 0xFF);
 	dataTx.header[3] = ((dstId >> 8) & 0xFF);
 	dataTx.header[4] = (dstId & 0xFF);

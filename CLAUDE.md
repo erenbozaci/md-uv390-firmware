@@ -63,7 +63,7 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 
 ## Messaging feature (added in this fork)
 
-- `application/source/functions/messaging.c` + `include/functions/messaging.h`: RAM-only ring buffer (16 messages, lost at power-off), canned messages, `messagingReceive()` (beep + toast), `messagingTick()` (called from the main loop, drains the DMR receive mailbox, 10 s watchdog on DMR TX), `messagingSendAPRS()`, `messagingSendDMR()`.
+- `application/source/functions/messaging.c` + `include/functions/messaging.h`: RAM-only ring buffer (12 messages, lost at power-off), canned messages, `messagingReceive()` (beep + toast), `messagingTick()` (called from the main loop, drains the DMR receive mailbox, 10 s watchdog on DMR TX), `messagingSendAPRS()`, `messagingSendDMR()`.
 - UI: `user_interface/menuMessages.c` (`MENU_MESSAGES`, Main menu "Messages", string offset 281 = `.messages`, language tag version 7). Digital channel: To = DMR ID (digits) -> DMR data call. Analog channel: To = callsign -> APRS message.
 - **APRS send**: `aprsMessageSend()` in `aprs.c` reuses the beacon path (`aprsBeaconingSendBeacon`) with a private `aprsOutgoingMessage.pending` flag; works with beaconing OFF but needs an APRS config on the channel. There is no APRS receive path.
 - **DMR receive**: `hrc6000SysReceivedDataInt()` (interrupt context) hands good data frames (types 0x6 header, 0x7/0x8/0xA blocks, read from SPI page 0x02) to `messagingDmrRxFrame()`. Only unconfirmed/confirmed data packets (DPF 2/3) addressed to our ID or current TG; no UDT/short data; text is the longest printable run (8-bit or UTF-16LE), heuristic.
@@ -82,3 +82,25 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 - Options -> "Dual Watch" (`menuDualWatchOptions.c`, `MENU_DUAL_WATCH`, reuses language string 143 so no language-file change). Stored in `nonVolatileSettings.dualWatchOptions` (the old `UNUSED_1`, 0 = stock behaviour, no settings reset); bit layout and `DUALWATCH_*` macros in `settings.h`.
 - Options: Auto start (starts at every VFO screen entry, also after TX), Home VFO, Speed (default / 90 / 200 / 400 ms), On RX Switch/Stay. Logic is in `uiVFOMode.c`: `dualWatchStart()` (shared with the VFO quick menu), `dualWatchStayCheck()` (called first in `scanning()`).
 - Stay = on the non-home VFO a carrier only gives a rate-limited beep and the scan hops back; there is no real simultaneous receive (single AT1846S on MDUV380) and no priority pre-emption while paused on a signal.
+
+## Screenshots / verifying the UI on the real radio
+
+- The running radio is a USB serial device (`/dev/ttyACM0`, "OpenMDUV380Plus_10W"). `MDUV380_firmware/tools/screen_grab.py out.png` reads the display buffer (CPS 'R' command, area 6) and writes a PNG; then `Read` the PNG to look at it. Needs `pyserial` + `pillow` (venv in the scratchpad). Works in normal operation; not in DFU/hotspot mode. Do not send CPS command 0 (it opens the CPS screen on the radio).
+- Channel side: option "Side B: Channel" makes Dual Watch alternate between the VFO and the current zone channel (`dwChannelData`; `currentChannelData` is switched, `currentVFONumber` is not; flags `dualWatchChannelSide`/`dualWatchOnChannel`). Known limits: stopping (key or PTT) while on the channel retunes the VFO, so PTT transmits on the VFO; channel-side loads touch per-VFO TG index state.
+- Arrow keys: the MD-UV390 has only Up/Down arrow keys (no Left/Right); on MDUV380 `KEY_INCREASE`/`KEY_DECREASE` are `KEY_FRONT_UP`/`KEY_FRONT_DOWN` (keyboard.h). Their behaviour is the stock one (squelch in analog, TG step in digital); an earlier A/B-switch remap conflicted with the stock RX/TX focus handling and was removed. The red key switches between the channel and VFO screens (stock).
+
+## RAM is almost full (important)
+
+- The MDUV380 build links with only a few tens of bytes to spare in `RAM` (`arm-none-eabi-size build/MDUV380_FW.elf`: data+bss about 191.6 KB). Adding ~200 bytes of static data made the link fail with "section `._user_heap_stack' will not fit in region `RAM'". Keep new static buffers tiny (messaging store is 12 entries, DMR RX reassembly 12 blocks on purpose) and check the link after every addition.
+
+## Review findings kept as known limits
+
+- DMR TX payload is raw UTF-16LE with SAP 0 (only this firmware reads it; commercial radios expect IP/UDP text). The message CRC-32 is left to the chip (unverified); RX does not re-check it in software, and the pad octet count is read from header octet 1 low nibble.
+- A DMR message is added to the inbox as "sent" when queued, not when the transmission finished.
+
+## Dual screen (Anytone style, two independent rows)
+
+- Options -> Dual Watch -> "Dual scr: On": the VFO screen and the channel screen both draw two rows, A (top) and B (bottom), by `uiDualScreenDraw()` in `uiDualScreen.c`. Each row is independently a VFO (row A = VFO A, row B = VFO B) or a channel; a channel row has its own zone and index in it (`slotZone[]`, `slotIndex[]`, RAM only). Three text lines per row: name / frequency + FM|DMR / zone (small font). The active row is highlighted.
+- Keys (`uiDualScreenHandleKey()`, called first in both `handleEvent()`s, not used with SK1/SK2, while scanning, TX, digit entry or channel details): Up/Down arrows (`KEY_FRONT_UP/DOWN`) select the other row, red key toggles the active row VFO <-> channel, rotary is stock (frequency or channel). Arrows therefore no longer do squelch/TG in this mode.
+- No pointer swapping: the active row is simply the stock VFO or channel screen (switched with `menuSystemSetCurrentMenu`, channel data flagged invalid with `channelScreenChannelData.rxFreq = 0` so it reloads, zone set like the zone list does); the other row is only drawn from the codeplug / `settingsVFOChannel`. State bits `DUALWATCH_LINE_A_CHANNEL/_LINE_B_CHANNEL/_ACTIVE_B` in `dualWatchOptions`; `uiDualScreenScreenEntered()` re-syncs when a screen is entered any other way.
+- Limits: the TG override and the channel TG list index are shared by both channel rows; only one receiver, the inactive row is not monitored (Dual Watch is separate and not linked to the rows yet).

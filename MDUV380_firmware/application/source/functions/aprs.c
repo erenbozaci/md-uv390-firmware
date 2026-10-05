@@ -636,7 +636,7 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 	bool courseAndSpeed = false;
 	bool gpsAndLocationAreValid = (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_LOCATION_FROM_GPS) && aprsBeaconingLocationIsValid(previousLocation) && aprsBeaconingLocationIsValid(currentLocation));
 #if ! defined(PLATFORM_MD9600)
-	bool beaconingSilently = (aprsConfig->flags & CODEPLUG_APRS_CONFIG_FLAG_BEACONING_SILENTLY);
+	bool beaconingSilently = (config->flags & CODEPLUG_APRS_CONFIG_FLAG_BEACONING_SILENTLY);
 #endif
 
 	aprsConfig = config;
@@ -1759,6 +1759,8 @@ bool aprsMessageSend(const char *addressee, const char *text)
 	}
 
 	// The channel's APRS config is only loaded while beaconing is enabled, so load it on demand
+	bool configLoadedHere = false;
+
 	if ((aprsBcnData.settings.mode == APRS_BEACONING_MODE_OFF) || (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG) == false))
 	{
 		uint8_t APRSConfigIndex = currentChannelData->aprsConfigIndex;
@@ -1768,11 +1770,17 @@ bool aprsMessageSend(const char *addressee, const char *text)
 			return false;
 		}
 		aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_HAS_APRS_CONFIG, true);
+		configLoadedHere = true;
 	}
 
 	aprsOutgoingMessage.pending = true;
 	sent = aprsBeaconingSendBeacon(false, true);
 	aprsOutgoingMessage.pending = false;
+
+	if ((sent == false) && configLoadedHere && (aprsBcnData.settings.mode == APRS_BEACONING_MODE_OFF))
+	{
+		aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_HAS_APRS_CONFIG, false); // don't leave a config around that beaconing never loaded
+	}
 
 	if (sent)
 	{

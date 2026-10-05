@@ -35,7 +35,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MESSAGING_MAX_MESSAGES    16U // RAM-only ring buffer, oldest entries are dropped
+#define MESSAGING_MAX_MESSAGES    12U // RAM-only ring buffer, oldest entries are dropped
 #define MESSAGING_PEER_LEN        10U // APRS addressee is 9 chars max + terminator
 #define MESSAGING_TEXT_LEN        68U // APRS message text is 67 chars max + terminator
 #define MESSAGING_NUM_CANNED       8U
@@ -51,6 +51,7 @@ typedef struct
 	char     peer[MESSAGING_PEER_LEN];
 	char     text[MESSAGING_TEXT_LEN];
 	uint32_t time;       // dateTimeSecs, 0 if unknown
+	uint32_t seq;        // unique, never changes: indices shift when a message arrives, this doesn't
 	uint8_t  transport;  // messagingTransport_t
 	bool     outgoing;
 	bool     unread;
@@ -60,6 +61,7 @@ void messagingInit(void);
 uint32_t messagingGetCount(void);
 uint32_t messagingGetUnreadCount(void);
 messagingEntry_t *messagingGetEntry(uint32_t index); // index 0 is the newest, NULL if out of range
+messagingEntry_t *messagingGetEntryBySeq(uint32_t seq, uint32_t *index); // NULL if the message has been dropped / deleted
 void messagingMarkRead(uint32_t index);
 void messagingDelete(uint32_t index);
 void messagingDeleteAll(void);

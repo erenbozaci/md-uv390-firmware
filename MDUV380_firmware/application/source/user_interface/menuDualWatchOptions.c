@@ -36,7 +36,9 @@
 
 enum
 {
-	DW_OPT_AUTOSTART = 0,
+	DW_OPT_DUAL_SCREEN = 0,
+	DW_OPT_AUTOSTART,
+	DW_OPT_SIDE_B,
 	DW_OPT_HOME,
 	DW_OPT_SPEED,
 	DW_OPT_ON_RX,
@@ -48,7 +50,7 @@ static void handleEvent(uiEvent_t *ev);
 
 static menuStatus_t menuDualWatchExitCode = MENU_STATUS_SUCCESS;
 
-static const char *const homeNames[3] = { "Current", "VFO A", "VFO B" };
+static const char *const homeNames[4] = { "Current", "VFO A", "VFO B", "Channel" };
 static const char *const speedNames[DUALWATCH_NUM_SPEEDS] = { "Default", "90ms", "200ms", "400ms" };
 
 static uint16_t options(void)
@@ -112,8 +114,16 @@ static void updateScreen(bool isFirstRun)
 
 		switch (mNum)
 		{
+			case DW_OPT_DUAL_SCREEN:
+				snprintf(buf, sizeof(buf), "Dual scr:%s", ((options() & DUALWATCH_DUAL_SCREEN) ? currentLanguage->on : currentLanguage->off));
+				break;
+
 			case DW_OPT_AUTOSTART:
 				snprintf(buf, sizeof(buf), "Auto:%s", ((options() & DUALWATCH_AUTOSTART) ? currentLanguage->on : currentLanguage->off));
+				break;
+
+			case DW_OPT_SIDE_B:
+				snprintf(buf, sizeof(buf), "Side B:%s", ((options() & DUALWATCH_CHANNEL_B) ? "Channel" : "VFO B"));
 				break;
 
 			case DW_OPT_HOME:
@@ -147,12 +157,20 @@ static void changeOption(bool up)
 
 	switch (menuDataGlobal.currentItemIndex)
 	{
+		case DW_OPT_DUAL_SCREEN:
+			o ^= DUALWATCH_DUAL_SCREEN;
+			break;
+
 		case DW_OPT_AUTOSTART:
 			o ^= DUALWATCH_AUTOSTART;
 			break;
 
+		case DW_OPT_SIDE_B:
+			o ^= DUALWATCH_CHANNEL_B;
+			break;
+
 		case DW_OPT_HOME:
-			o = ((o & ~DUALWATCH_HOME_MASK) | (cycle(((o & DUALWATCH_HOME_MASK) >> DUALWATCH_HOME_SHIFT), 3U, up) << DUALWATCH_HOME_SHIFT));
+			o = ((o & ~DUALWATCH_HOME_MASK) | (cycle(((o & DUALWATCH_HOME_MASK) >> DUALWATCH_HOME_SHIFT), 4U, up) << DUALWATCH_HOME_SHIFT));
 			break;
 
 		case DW_OPT_SPEED:

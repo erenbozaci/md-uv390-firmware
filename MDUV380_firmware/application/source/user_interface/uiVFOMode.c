@@ -34,6 +34,7 @@
 #include "functions/rxPowerSaving.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
+#include "user_interface/uiDualScreen.h"
 #include "user_interface/uiLocalisation.h"
 #include "utils.h"
 
@@ -66,6 +67,13 @@ typedef enum
 // internal prototypes
 static void handleEvent(uiEvent_t *ev);
 static void dualWatchStart(void);
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+static uint8_t dualWatchHomeVFO = 0;
+static bool dualWatchHomeIsChannel = false;
+static bool dualWatchChannelSide = false; // second side is the zone channel (dwChannelData) instead of the other VFO
+static bool dualWatchOnChannel = false;   // currently tuned to the channel side (currentChannelData == &dwChannelData)
+static CodeplugChannel_t dwChannelData;
+#endif
 static void handleQuickMenuEvent(uiEvent_t *ev);
 static void updateQuickMenuScreen(bool isFirstRun);
 static void updateFrequency(int frequency, bool announceImmediately);
@@ -251,6 +259,9 @@ menuStatus_t uiVFOMode(uiEvent_t *ev, bool isFirstRun)
 		}
 
 		freqEnterReset();
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+		uiDualScreenScreenEntered(false);
+#endif
 		uiVFOModeUpdateScreen(0);
 		settingsSetVFODirty();
 
@@ -519,11 +530,30 @@ void uiVFOModeUpdateScreen(int txTimeSecs)
 	{
 		case QSO_DISPLAY_DEFAULT_SCREEN:
 			lastHeardClearLastID();
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+			if (uiDualScreenCanDraw() && (uiDataGlobal.Scan.active == false) && (uiDataGlobal.FreqEnter.index == 0) &&
+					(screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_NORMAL))
+			{
+				uiDualScreenDraw();
+			}
+			else
+#endif
 			if ((uiDataGlobal.Scan.active &&
 					(screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_DUAL_SCAN) && (uiDataGlobal.Scan.state == SCAN_STATE_SCANNING)))
 			{
-				uiUtilityDisplayFrequency(DISPLAY_Y_POS_RX_FREQ, false, false, settingsVFOChannel[CHANNEL_VFO_A].rxFreq, true, true, 1);
-				uiUtilityDisplayFrequency(DISPLAY_Y_POS_TX_FREQ, false, false, settingsVFOChannel[CHANNEL_VFO_B].rxFreq, true, true, 2);
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+				if (dualWatchChannelSide)
+				{
+					// Top: the VFO, bottom: the zone channel
+					uiUtilityDisplayFrequency(DISPLAY_Y_POS_RX_FREQ, false, false, settingsVFOChannel[nonVolatileSettings.currentVFONumber].rxFreq, true, true, ((nonVolatileSettings.currentVFONumber == 0) ? 1 : 4));
+					uiUtilityDisplayFrequency(DISPLAY_Y_POS_TX_FREQ, false, false, dwChannelData.rxFreq, true, true, 3);
+				}
+				else
+#endif
+				{
+					uiUtilityDisplayFrequency(DISPLAY_Y_POS_RX_FREQ, false, false, settingsVFOChannel[CHANNEL_VFO_A].rxFreq, true, true, 1);
+					uiUtilityDisplayFrequency(DISPLAY_Y_POS_TX_FREQ, false, false, settingsVFOChannel[CHANNEL_VFO_B].rxFreq, true, true, 2);
+				}
 			}
 			else
 			{
@@ -846,7 +876,6 @@ bool uiVFOModeIsTXFocused(void)
 }
 
 #if defined(HAS_DUAL_WATCH_OPTIONS)
-static uint8_t dualWatchHomeVFO = 0;
 
 static uint16_t dualWatchStepMs(void)
 {
@@ -862,10 +891,25 @@ static void dualWatchStart(void)
 	uiDataGlobal.Scan.active = true;
 #if defined(HAS_DUAL_WATCH_OPTIONS)
 	uiDataGlobal.Scan.stepTimeMilliseconds = dualWatchStepMs();
+	dualWatchOnChannel = false;
+	dualWatchChannelSide = false;
+	if (((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_CHANNEL_B)
+	{
+		// Use the current zone channel, load the zone first if the channel screen has never been shown
+		if (channelScreenChannelData.rxFreq == 0U)
+		{
+			uiChannelInitializeCurrentZone();
+		}
+
+		codeplugChannelGetDataForIndex(codeplugGetLastUsedChannelNumberInCurrentZone(), &dwChannelData);
+		dualWatchChannelSide = (dwChannelData.rxFreq != 0U);
+	}
+
 	{
 		uint16_t home = ((((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_HOME_MASK) >> DUALWATCH_HOME_SHIFT);
 
-		dualWatchHomeVFO = ((home == 0U) ? nonVolatileSettings.currentVFONumber : (home - 1U));
+		dualWatchHomeIsChannel = ((home == 3U) && dualWatchChannelSide);
+		dualWatchHomeVFO = (((home == 0U) || (home == 3U)) ? nonVolatileSettings.currentVFONumber : (home - 1U));
 	}
 #else
 	uiDataGlobal.Scan.stepTimeMilliseconds = settingsGetScanStepTimeMilliseconds();
@@ -890,9 +934,11 @@ static bool dualWatchStayCheck(void)
 {
 	static uint32_t lastAlertTime = 0;
 
+	bool onHome = (dualWatchChannelSide ? (dualWatchOnChannel == dualWatchHomeIsChannel) : (nonVolatileSettings.currentVFONumber == dualWatchHomeVFO));
+
 	if ((screenOperationMode[nonVolatileSettings.currentVFONumber] != VFO_SCREEN_OPERATION_DUAL_SCAN) ||
 			((((uint16_t)nonVolatileSettings.dualWatchOptions) & DUALWATCH_STAY) == 0U) ||
-			(nonVolatileSettings.currentVFONumber == dualWatchHomeVFO))
+			onHome)
 	{
 		return false;
 	}
@@ -937,6 +983,17 @@ void uiVFOModeStopScanning(void)
 
 	if (screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_DUAL_SCAN)
 	{
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+		if (dualWatchOnChannel)
+		{
+			// Stopped while tuned to the zone channel: go back to the VFO
+			dualWatchOnChannel = false;
+			currentChannelData = &settingsVFOChannel[nonVolatileSettings.currentVFONumber];
+			trxSetFrequency(currentChannelData->rxFreq, currentChannelData->txFreq, (((currentChannelData->chMode == RADIO_MODE_DIGITAL) && codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_FORCE_DMO)) ? DMR_MODE_DMO : DMR_MODE_AUTO));
+			uiVFOModeLoadChannelData(false);
+		}
+		dualWatchChannelSide = false;
+#endif
 		screenOperationMode[CHANNEL_VFO_A] = screenOperationMode[CHANNEL_VFO_B] = VFO_SCREEN_OPERATION_NORMAL;
 		settingsSet(nonVolatileSettings.currentVFONumber, nonVolatileSettings.currentVFONumber);
 
@@ -1140,6 +1197,13 @@ static void toggleAnalogBandwidth(void)
 
 static void handleEvent(uiEvent_t *ev)
 {
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+	if (uiDualScreenHandleKey(ev, false, ((uiDataGlobal.FreqEnter.index > 0) || (screenOperationMode[nonVolatileSettings.currentVFONumber] != VFO_SCREEN_OPERATION_NORMAL))))
+	{
+		return;
+	}
+#endif
+
 	if (uiDataGlobal.Scan.active && (ev->events & KEY_EVENT))
 	{
 		if (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == 0)
@@ -3641,6 +3705,16 @@ bool uiVFOModeIsScanning(void)
 	return (uiDataGlobal.Scan.toneActive || uiDataGlobal.Scan.active);
 }
 
+bool uiVFOModeDualWatchOnChannel(void)
+{
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+	return (dualWatchChannelSide && dualWatchOnChannel && uiDataGlobal.Scan.active &&
+			(screenOperationMode[nonVolatileSettings.currentVFONumber] == VFO_SCREEN_OPERATION_DUAL_SCAN));
+#else
+	return false;
+#endif
+}
+
 bool uiVFOModeDualWatchIsScanning(void)
 {
 	return ((menuSystemGetCurrentMenuNumber() == UI_VFO_MODE) && uiDataGlobal.Scan.active &&
@@ -4142,8 +4216,19 @@ static void scanning(void)
 			//
 			// Note: nonVolatileSettings.currentVFONumber is not changed using settingsSet(), to prevent crazy EEPROM
 			//       writes. uiVFOModeStopScanning() is doing this, when the scanning process ends (for any reason).
-			nonVolatileSettings.currentVFONumber = (1 - nonVolatileSettings.currentVFONumber);
-			currentChannelData = &settingsVFOChannel[nonVolatileSettings.currentVFONumber];
+#if defined(HAS_DUAL_WATCH_OPTIONS)
+			if (dualWatchChannelSide)
+			{
+				// Alternate between the VFO (currentVFONumber isn't changed) and the zone channel
+				dualWatchOnChannel = !dualWatchOnChannel;
+				currentChannelData = (dualWatchOnChannel ? &dwChannelData : &settingsVFOChannel[nonVolatileSettings.currentVFONumber]);
+			}
+			else
+#endif
+			{
+				nonVolatileSettings.currentVFONumber = (1 - nonVolatileSettings.currentVFONumber);
+				currentChannelData = &settingsVFOChannel[nonVolatileSettings.currentVFONumber];
+			}
 
 			currentChannelData->libreDMR_Power = 0x00;// Force channel to the Master power
 

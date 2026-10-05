@@ -41,7 +41,8 @@ DEFS := \
 # DEFS += -DLANGUAGE_BUILD_JAPANESE
 
 # GITVERSION matches what STM32CubeIDE injects in .cproject
-GITVERSION := $(shell git -C $(CURDIR) rev-parse --short HEAD 2>/dev/null || echo UNKNOWN)
+# safe.directory: inside the build container the repo belongs to another user and git would refuse (version shown as UNKNOWN)
+GITVERSION := $(shell git -c safe.directory='*' -C $(CURDIR) rev-parse --short HEAD 2>/dev/null || echo UNKNOWN)
 DEFS += -DGITVERSION=\"$(GITVERSION)\"
 
 INCLUDES := \
