@@ -170,6 +170,7 @@ void aprsBeaconingSetSuspend(bool suspend);
 void aprsBeaconingToggles(void);
 aprsBeaconingMode_t aprsBeaconingGetMode(void);
 bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing);
+bool aprsMessageSend(const char *addressee, const char *text);
 bool aprsBeaconingIsTransmitting(void);
 bool aprsBeaconingForcedManualBeaconingTriggered(void);
 bool aprsBeaconingOnDifferentFrequency(void);

@@ -328,6 +328,7 @@ const stringsTable_t frenchLanguage =
 .last_talker				= "Der. locut.", // MaxLen: 16 (with ':' + .off or 2 digits value + 's')
 .mute					= "Sourdine", // MaxLen: 16 (with ':' + .on or .off)
 .reset_configuration			= "Réinit. config.", // MaxLen: 16
+.messages				= "Messages", // MaxLen: 16 - Main menu entry for the APRS messaging inbox
 };
 /********************************************************************
  *

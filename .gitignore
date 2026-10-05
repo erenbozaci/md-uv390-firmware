@@ -24,3 +24,6 @@ Release/
 # Python
 __pycache__/
 *.pyc
+
+# Proprietary donor firmware used for codec patching - never commit
+/donor/

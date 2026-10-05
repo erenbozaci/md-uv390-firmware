@@ -90,6 +90,10 @@ menuDataGlobal_t menuDataGlobal =
 #if !defined(PLATFORM_GD77S)
 				NULL,// APRS options
 #endif
+				NULL,// Reset custom data
+#if !defined(PLATFORM_GD77S)
+				NULL,// Messages
+#endif
 				// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 				NULL,// MessageBox
 				NULL,// hotspot mode
@@ -149,6 +153,9 @@ static menuFunctionData_t menuFunctions[] =
 		{ menuAPRSOptions,          NULL, NULL, 0 },
 #endif
 		{ menuResetCustomData,      NULL, NULL, 0 },
+#if !defined(PLATFORM_GD77S)
+		{ menuMessages,             NULL, NULL, 0 },
+#endif
 		// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 		{ uiMessageBox,             NULL, NULL, 0 },
 		{ menuHotspotMode,          NULL, NULL, 0 },
@@ -659,6 +666,9 @@ const menuItemNewData_t mainMenuItems[] =
 	{ 173, MENU_SATELLITE       },
 #if defined(HAS_GPS)
 	{ 195, MENU_GPS		        },
+#endif
+#if !defined(PLATFORM_GD77S)
+	{ 281, MENU_MESSAGES        },// stringOffset 281 = .messages field (last in stringsTable_t)
 #endif
 };
 

@@ -663,6 +663,7 @@ static void handleEvent(uiEvent_t *ev)
 
 void menuTxScreenHandleTxTermination(uiEvent_t *ev, txTerminationReason_t reason)
 {
+	HRC6000DataTxCancel(); // abort any DMR data (SMS) job, it would keep the software PTT held
 	PTTToggledDown = false;
 	voxReset();
 

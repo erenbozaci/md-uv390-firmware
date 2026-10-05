@@ -277,6 +277,17 @@ static volatile uint8_t dataByte;
 static AX25Encoder_t encoderData;
 static CodeplugAPRSConfig_t *aprsConfig;
 
+#define APRS_MESSAGE_ADDRESSEE_LEN  9U
+#define APRS_MESSAGE_TEXT_MAX_LEN   67U
+
+static struct
+{
+	bool     pending;
+	char     addressee[APRS_MESSAGE_ADDRESSEE_LEN + 1U];
+	char     text[APRS_MESSAGE_TEXT_MAX_LEN + 1U];
+	uint16_t nextId;
+} aprsOutgoingMessage = { .pending = false, .nextId = 1U };
+
 volatile aprsSendProgress_t aprsTxProgress = APRS_TX_IDLE; // used in the ISR
 
 
@@ -507,6 +518,24 @@ static void enqueuePayload(AX25Encoder_t *encoderData, const char *latStr, const
 	{
 		enqueueString(encoderData, aprsConfig->comment);
 	}
+}
+
+// APRS message format: ":ADDRESSEE:text{id" (addressee padded with spaces to 9 chars).
+// The message number lets the recipient ack; no ack handling is done here as there's no APRS receive path.
+static void enqueueMessagePayload(AX25Encoder_t *encoderData)
+{
+	char idStr[8];
+
+	enqueueCharNrzi(encoderData, ':', true);
+	enqueueString(encoderData, aprsOutgoingMessage.addressee);
+	for (size_t i = strlen(aprsOutgoingMessage.addressee); i < APRS_MESSAGE_ADDRESSEE_LEN; i++)
+	{
+		enqueueCharNrzi(encoderData, ' ', true);
+	}
+	enqueueCharNrzi(encoderData, ':', true);
+	enqueueString(encoderData, aprsOutgoingMessage.text);
+	snprintf(idStr, sizeof(idStr), "{%u", aprsOutgoingMessage.nextId);
+	enqueueString(encoderData, idStr);
 }
 
 static void aprsTxEnded(void)
@@ -754,7 +783,14 @@ static bool aprsSendPacket(CodeplugAPRSConfig_t *config, aprsBeaconingLocation_t
 
 	encoderData.crc = 0xFFFF; // Initialise CRC now, after data has been sent as CRC does is only for data bytes
 	enqueueHeader(&encoderData);
-	enqueuePayload(&encoderData, latStr, lonStr, (courseAndSpeed ? courseSpeedStr : NULL), channelSettings, fromSatScreen);
+	if (aprsOutgoingMessage.pending)
+	{
+		enqueueMessagePayload(&encoderData);
+	}
+	else
+	{
+		enqueuePayload(&encoderData, latStr, lonStr, (courseAndSpeed ? courseSpeedStr : NULL), channelSettings, fromSatScreen);
+	}
 	enqueueCRC(&encoderData);
 	enqueueFlagOfLength(&encoderData, 3U);
 
@@ -1467,6 +1503,8 @@ aprsBeaconingMode_t aprsBeaconingGetMode(void)
 bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 {
 	aprsChannelSettingsInUse_t channelSettings;
+	const bool isMessage = aprsOutgoingMessage.pending; // An APRS message is sent as a manual beacon, even if beaconing is OFF
+	const aprsBeaconingMode_t beaconingMode = (isMessage ? APRS_BEACONING_MODE_MANUAL : aprsBcnData.settings.mode);
 
 	if (uiDataGlobal.Scan.active ||
 			(trxGetMode() == RADIO_MODE_NONE) ||
@@ -1474,8 +1512,8 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 			settingsIsOptionBitSet(BIT_TX_INHIBIT) ||
 			(fromSatScreen && (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_SATELLITE_CONFIG) == false)) ||
 			((fromSatScreen == false) &&
-					((aprsBcnData.settings.mode == APRS_BEACONING_MODE_OFF)
-							|| (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_ENABLED) == false)
+					((beaconingMode == APRS_BEACONING_MODE_OFF)
+							|| ((isMessage == false) && (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_ENABLED) == false))
 							|| (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG) == false)
 					)
 			)
@@ -1485,7 +1523,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 	}
 
 	// Ignore PTT rate when in satellite mode.
-	if ((fromSatScreen == false) && (aprsBcnData.settings.mode == APRS_BEACONING_MODE_PTT))
+	if ((fromSatScreen == false) && (beaconingMode == APRS_BEACONING_MODE_PTT))
 	{
 		if ((ticksTimerHasExpired(&aprsBcnData.nextBeaconTimer) == false)
 				|| (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG) == false))
@@ -1509,7 +1547,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 	}
 #endif
 
-	bool anyManualMode = (fromSatScreen || forcedManualBeaconing || (aprsBcnData.settings.mode == APRS_BEACONING_MODE_PTT) || (aprsBcnData.settings.mode == APRS_BEACONING_MODE_MANUAL));
+	bool anyManualMode = (fromSatScreen || forcedManualBeaconing || (beaconingMode == APRS_BEACONING_MODE_PTT) || (beaconingMode == APRS_BEACONING_MODE_MANUAL));
 
 	// check config validity
 	if (anyManualMode)
@@ -1517,7 +1555,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 		char buffer[SCREEN_LINE_BUFFER_SIZE];
 		bool configIsValid = ((fromSatScreen && aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_SATELLITE_CONFIG)) ||
 				((fromSatScreen == false) && aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG)));
-		bool positionIsValid = (fromSatScreen ? false : aprsBeaconingCurrentPositionIsValid());
+		bool positionIsValid = (isMessage ? true : (fromSatScreen ? false : aprsBeaconingCurrentPositionIsValid()));
 
 		aprsBcnData.forcedManualBeaconing = forcedManualBeaconing;
 
@@ -1575,7 +1613,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 		uint32_t txFrequency = (aprsConfigHasFrequencyQSY ? aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL].txFrequency : currentChannelData->txFreq);
 
 		// toggle xmit
-		switch (aprsBcnData.settings.mode)
+		switch (beaconingMode)
 		{
 			case APRS_BEACONING_MODE_MANUAL:
 			case APRS_BEACONING_MODE_AUTO:
@@ -1686,7 +1724,7 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 
 	if (anyManualMode)
 	{
-		if (aprsBcnData.settings.mode == APRS_BEACONING_MODE_PTT)
+		if (beaconingMode == APRS_BEACONING_MODE_PTT)
 		{
 			ticksTimerStart(&aprsBcnData.nextBeaconTimer, (initialIntervalsInSecs[aprsBcnData.settings.initialInterval] * MILLISECS_PER_SEC));
 		}
@@ -1695,6 +1733,53 @@ bool aprsBeaconingSendBeacon(bool fromSatScreen, bool forcedManualBeaconing)
 	}
 
 	return true;
+}
+
+bool aprsMessageSend(const char *addressee, const char *text)
+{
+	bool sent;
+
+	if ((addressee == NULL) || (text == NULL) || (addressee[0] == 0) || (text[0] == 0))
+	{
+		return false;
+	}
+
+	strncpy(aprsOutgoingMessage.addressee, addressee, APRS_MESSAGE_ADDRESSEE_LEN);
+	aprsOutgoingMessage.addressee[APRS_MESSAGE_ADDRESSEE_LEN] = 0;
+	strncpy(aprsOutgoingMessage.text, text, APRS_MESSAGE_TEXT_MAX_LEN);
+	aprsOutgoingMessage.text[APRS_MESSAGE_TEXT_MAX_LEN] = 0;
+
+	// '{', '|' and '~' are reserved by the APRS spec and must not appear in message text
+	for (char *c = aprsOutgoingMessage.text; *c != 0; c++)
+	{
+		if ((*c == '{') || (*c == '|') || (*c == '~'))
+		{
+			*c = ' ';
+		}
+	}
+
+	// The channel's APRS config is only loaded while beaconing is enabled, so load it on demand
+	if ((aprsBcnData.settings.mode == APRS_BEACONING_MODE_OFF) || (aprsBeaconingStateEnabled(APRS_BEACONING_STATE_HAS_APRS_CONFIG) == false))
+	{
+		uint8_t APRSConfigIndex = currentChannelData->aprsConfigIndex;
+
+		if ((APRSConfigIndex == 0) || (codeplugAPRSGetDataForIndex(APRSConfigIndex, &aprsBcnData.aprsConfig[APRS_CONFIG_CHANNEL]) == false))
+		{
+			return false;
+		}
+		aprsBeaconingStateSetEnable(APRS_BEACONING_STATE_HAS_APRS_CONFIG, true);
+	}
+
+	aprsOutgoingMessage.pending = true;
+	sent = aprsBeaconingSendBeacon(false, true);
+	aprsOutgoingMessage.pending = false;
+
+	if (sent)
+	{
+		aprsOutgoingMessage.nextId = ((aprsOutgoingMessage.nextId % 99999U) + 1U);
+	}
+
+	return sent;
 }
 
 bool aprsBeaconingIsTransmitting(void)

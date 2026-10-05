@@ -328,6 +328,7 @@ const stringsTable_t slovenianLanguage =
 .last_talker				= "Last talker", // MaxLen: 16 (with ':' + .off or 2 digits value + 's')
 .mute					= "Mute", // MaxLen: 16 (with ':' + .on or .off)
 .reset_configuration			= "Ponastavi konf.", // MaxLen: 16
+.messages				= "Messages", // MaxLen: 16 - Main menu entry for the APRS messaging inbox
 };
 /********************************************************************
  *

@@ -61,6 +61,7 @@
 
 // Couldn't declare into aprs.h, due to header cross-dependence.
 void aprsBeaconingTick(uiEvent_t *ev);
+#include "functions/messaging.h"
 
 volatile bool mainIsRunning = true;
 static bool updateMessageOnScreen = false;
@@ -553,6 +554,7 @@ void applicationMainTask(void)
 	}
 
 	aprsBeaconingInit();
+	messagingInit();
 	aprsBeaconingStart();
 
 	/* Infinite loop */
@@ -950,6 +952,16 @@ void applicationMainTask(void)
 			{
 				PTTToggledDown = false;
 			}
+		}
+
+		// DMR data (SMS) job: key up, and hold the (software) PTT until the last block has been queued
+		if (HRC6000DataTxIsActive())
+		{
+			if (HRC6000DataTxTakeStartRequest())
+			{
+				button_event = EVENT_BUTTON_CHANGE;
+			}
+			buttons |= BUTTON_PTT;
 		}
 
 		hasSignal = false;
@@ -1384,6 +1396,7 @@ void applicationMainTask(void)
 		voxTick();
 		gpsTick();
 		aprsBeaconingTick(&ev);
+		messagingTick();
 		settingsSaveIfNeeded(false);
 
 		if (settingsIsOptionBitSet(BIT_DISPLAY_TIME_IN_HEADER))
