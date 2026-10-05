@@ -6,6 +6,7 @@
 #   ./uv390.sh all            build, wait for the radio in DFU mode, flash, then screenshot
 #   ./uv390.sh shot [file]    screenshot of the running radio (default: screen.png)
 #   ./uv390.sh size           flash/RAM usage of the last build (RAM is almost full!)
+#   ./uv390.sh doc <name>     screenshot saved as docs/screenshots/<name>.png (for the README)
 #
 # DFU mode: power off, hold SK1, power on. Python tools live in ./.venv (created on first use).
 
@@ -104,11 +105,19 @@ do_shot() {
     "$VENV/bin/python" "$FW/tools/screen_grab.py" "$out"
 }
 
+do_doc() {
+    local name="${1:-}"
+    [ -n "$name" ] || die "usage: $0 doc <name>   (saves docs/screenshots/<name>.png)"
+    mkdir -p "$REPO/docs/screenshots"
+    do_shot "$REPO/docs/screenshots/${name}.png"
+}
+
 case "${1:-}" in
     build) do_build ;;
     flash) do_flash ;;
     size)  do_size ;;
     shot)  do_shot "${2:-screen.png}" ;;
+    doc)   do_doc "${2:-}" ;;
     all)
         do_build
         venv
@@ -117,7 +126,7 @@ case "${1:-}" in
         SHOT_DELAY=10 do_shot "${2:-screen.png}"
         ;;
     *)
-        sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
         exit 1
         ;;
 esac
