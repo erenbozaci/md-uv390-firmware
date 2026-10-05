@@ -32,154 +32,49 @@
 
 static uint16_t bitbuffer_encode[72];
 
+// The AMBE codec lives at fixed addresses in the donor firmware image (bit 0 set = Thumb).
+// Call it through C function pointers: modern GCC/ld refuse direct BL to absolute addresses.
+// Argument layout (r0-r3, then stack) mirrors the original hand-written assembly calls.
+typedef void (*ambeDecodeFn_t)(volatile uint8_t *waveOut, int numSamples, uint16_t *bitbuffer, int zero,
+		int stack0, int stage, uint8_t *state);
+typedef void (*ambeEncodeFn_t)(uint16_t *bitbuffer, int zero, volatile uint8_t *waveIn, int numSamples,
+		int stack0, int stage, int stateLen, uint8_t *state);
+typedef void (*ambeEncodeEccFn_t)(uint16_t *bitbufferIn, uint16_t *bitbufferOut, int zero, uint8_t *state);
+
+#define ambeDecode    ((ambeDecodeFn_t)AMBE_DECODE)
+#define ambeEncode    ((ambeEncodeFn_t)AMBE_ENCODE)
+#define ambeEncodeEcc ((ambeEncodeEccFn_t)AMBE_ENCODE_ECC)
+
 void codecDecode(uint8_t *indata_ptr, int numbBlocks)
 {
 	uint16_t bitbuffer_decode[49];
 
-    for (int idx = 0; idx < numbBlocks; idx++)
-    {
+	for (int idx = 0; idx < numbBlocks; idx++)
+	{
 		initFrame(indata_ptr, bitbuffer_decode);
 		indata_ptr += 9;
 
-		soundSetupBuffer();// this just sets currentWaveBuffer but the compiler seems to optimise out the code if I try to do it in this file
+		for (int stage = 0; stage < 2; stage++)
 		{
-			// R0/R1/R2 carry the call arguments into the codec. Bind via
-			// register-local variables and tie them to the asm via input
-			// constraints so modern gcc cannot drop the assignments.
-			register int r0 asm ("r0") = (int)currentWaveBuffer;
-			register int r1 asm ("r1") = (int)ambebuffer_decode;
-			register int r2 asm ("r2") = (int)bitbuffer_decode;
-
-			asm volatile (
-				"PUSH {R4-R11}\n"
-				"SUB SP, SP, #0x10\n"
-				"STR R1, [SP, #0x08]\n"
-				"LDR R1, =0\n"
-				"STR R1, [SP, #0x04]\n"
-				"LDR R1, =0\n"
-				"STR R1, [SP, #0x00]\n"
-				"LDR R3, =0\n"
-				"LDR R1, =80\n"
-				"BL " QU(AMBE_DECODE)
-				"ADD SP, SP, #0x10\n"
-				"POP {R4-R11}"
-				:
-				: "r"(r0), "r"(r1), "r"(r2)
-				: "r3", "memory", "cc"
-			);
+			soundSetupBuffer();// this just sets currentWaveBuffer
+			ambeDecode(currentWaveBuffer, 80, bitbuffer_decode, 0, 0, stage, ambebuffer_decode);
+			soundStoreBuffer();
 		}
-
-		soundStoreBuffer();
-
-		soundSetupBuffer();// this just sets currentWaveBuffer but the compiler seems to optimise out the code if I try to do it in this file
-		{
-			register int r0 asm ("r0") = (int)currentWaveBuffer;
-			register int r1 asm ("r1") = (int)ambebuffer_decode;
-			register int r2 asm ("r2") = (int)bitbuffer_decode;
-
-			asm volatile (
-				"PUSH {R4-R11}\n"
-				"SUB SP, SP, #0x10\n"
-				"STR R1, [SP, #0x08]\n"
-				"LDR R1, =1\n"
-				"STR R1, [SP, #0x04]\n"
-				"LDR R1, =0\n"
-				"STR R1, [SP, #0x00]\n"
-				"LDR R3, =0\n"
-				"LDR R1, =80\n"
-				"BL " QU(AMBE_DECODE)
-				"ADD SP, SP, #0x10\n"
-				"POP {R4-R11}"
-				:
-				: "r"(r0), "r"(r1), "r"(r2)
-				: "r3", "memory", "cc"
-			);
-		}
-
-		soundStoreBuffer();
-    }
+	}
 }
 
 void codecEncodeBlock(uint8_t *outdata_ptr)
 {
 	memset((uint8_t *)outdata_ptr, 0, 9);// fills with zeros
-	memset(bitbuffer_encode, 0, sizeof(bitbuffer_encode));// faster to call memset as it will be compiled as optimised code
+	memset(bitbuffer_encode, 0, sizeof(bitbuffer_encode));
 
-
-	soundRetrieveBuffer();// gets currentWaveBuffer pointer used as input r2 to the encoder
-
+	for (int stage = 0; stage < 2; stage++)
 	{
-		register int r0 asm ("r0") = (int)bitbuffer_encode;
-		register int r1 asm ("r1") = (int)ambebuffer_encode;
-		register int r2 asm ("r2") = (int)currentWaveBuffer;
-
-		asm volatile (
-			"PUSH {R4-R11}\n"
-			"SUB SP, SP, #0x14\n"
-			"STR R1, [SP, #0x0C]\n"
-			"LDR R1, =0x00002000\n"
-			"STR R1, [SP, #0x08]\n"
-			"LDR R1, =0\n"
-			"STR R1, [SP, #0x04]\n"
-			"LDR R1, =0x00001840\n"
-			"STR R1, [SP, #0x00]\n"
-			"LDR R3, =80\n"
-			"LDR R1, =0\n"
-			"BL " QU(AMBE_ENCODE)
-			"ADD SP, SP, #0x14\n"
-			"POP {R4-R11}"
-			: "+r"(r0), "+r"(r1), "+r"(r2)
-			:
-			: "r3", "memory", "cc"
-		);
+		soundRetrieveBuffer();// gets currentWaveBuffer pointer used as input to the encoder
+		ambeEncode(bitbuffer_encode, 0, currentWaveBuffer, 80, (stage == 0) ? 0x1840 : 0x0800, stage, 0x2000, ambebuffer_encode);
 	}
 
-	soundRetrieveBuffer();// gets currentWaveBuffer pointer used as input r2 to the encoder
-
-	{
-		register int r0 asm ("r0") = (int)bitbuffer_encode;
-		register int r1 asm ("r1") = (int)ambebuffer_encode;
-		register int r2 asm ("r2") = (int)currentWaveBuffer;
-
-		asm volatile (
-			"PUSH {R4-R11}\n"
-			"SUB SP, SP, #0x14\n"
-			"STR R1, [SP, #0x0C]\n"
-			"LDR R1, =0x00002000\n"
-			"STR R1, [SP, #0x08]\n"
-			"LDR R1, =1\n"
-			"STR R1, [SP, #0x04]\n"
-			"LDR R1, =0x00000800\n"
-			"STR R1, [SP, #0x00]\n"
-			"LDR R3, =80\n"
-			"LDR R1, =0\n"
-			"BL " QU(AMBE_ENCODE)
-			"ADD SP, SP, #0x14\n"
-			"POP {R4-R11}"
-			: "+r"(r0), "+r"(r1), "+r"(r2)
-			:
-			: "r3", "memory", "cc"
-		);
-	}
-
-	{
-		register int r0 asm ("r0") = (int)bitbuffer_encode;
-		register int r1 asm ("r1") = (int)ambebuffer_encode_ecc;
-
-		asm volatile (
-			"PUSH {R4-R11}\n"
-			"SUB SP, SP, #0x14\n"
-			"MOV R3, R1\n"
-			"LDR R2, =0\n"
-			"MOV R1, R0\n"
-			"BL " QU(AMBE_ENCODE_ECC)
-			"ADD SP, SP, #0x14\n"
-			"POP {R4-R11}"
-			: "+r"(r0), "+r"(r1)
-			:
-			: "r2", "r3", "memory", "cc"
-		);
-	}
+	ambeEncodeEcc(bitbuffer_encode, bitbuffer_encode, 0, ambebuffer_encode_ecc);
 
 	for (int i = 0; i < 72; i++)
 	{
