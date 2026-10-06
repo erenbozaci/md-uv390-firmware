@@ -29,6 +29,8 @@ ADDR_GENERAL = 0xE0
 
 MAX_CHANNELS, MAX_CONTACTS, MAX_TGLISTS, MAX_ZONES = 1024, 1024, 76, 68
 CALL_TYPES = ["Group", "Private", "All"]
+# channel byte 25: 0 = radio default (master), n = level n-1 of the firmware table (POWER_LEVELS in uiGlobals.c)
+POWER_LABELS = ["Radio default", "50 mW", "250 mW", "500 mW", "750 mW", "1 W", "2 W", "3 W", "5 W", "10 W"]
 
 CTCSS = ["67.0", "69.3", "71.9", "74.4", "77.0", "79.7", "82.5", "85.4", "88.5", "91.5", "94.8", "97.4", "100.0",
          "103.5", "107.2", "110.9", "114.8", "118.8", "123.0", "127.3", "131.8", "136.5", "141.3", "146.2", "151.4",
@@ -209,7 +211,7 @@ class Codeplug:
                 "number": n, "raw": d, "name": _name(d[:16]), "mode": "DMR" if digital else "FM",
                 "rx": bcd2int(struct.unpack_from("<I", d, 16)[0]) / 100000,
                 "tx": bcd2int(struct.unpack_from("<I", d, 20)[0]) / 100000,
-                "power": "High" if f4 & 0x80 else "Low",
+                "power": d[25],
                 "bw": "25" if f4 & 0x02 else "12.5",
                 "rxtone": tone_to_str(struct.unpack_from("<H", d, 32)[0]),
                 "txtone": tone_to_str(struct.unpack_from("<H", d, 34)[0]),
@@ -260,7 +262,7 @@ class Codeplug:
         raw = bytearray(CH_SIZE)
         raw[:16] = b"\xff" * 16
         self.channels[n] = {"number": n, "raw": bytes(raw), "name": "New channel", "mode": "FM", "rx": 145.5,
-                            "tx": 145.5, "power": "Low", "bw": "12.5", "rxtone": "", "txtone": "", "colour": 1,
+                            "tx": 145.5, "power": 0, "bw": "12.5", "rxtone": "", "txtone": "", "colour": 1,
                             "slot": 1, "contact": 0, "tglist": 0, "rxonly": False, "zoneskip": False,
                             "allskip": False}
         return n
@@ -423,7 +425,9 @@ class Codeplug:
         if _chg(c, "slot"):
             d[49] = (d[49] | 0x40) if c["slot"] == 2 else (d[49] & ~0x40 & 0xFF)
         f4 = d[51]
-        for key, mask, on in (("power", 0x80, c["power"] == "High"), ("bw", 0x02, c["bw"] == "25"),
+        if _chg(c, "power"):
+            d[25] = c["power"]
+        for key, mask, on in (("bw", 0x02, c["bw"] == "25"),
                               ("rxonly", 0x04, c["rxonly"]), ("zoneskip", 0x20, c["zoneskip"]),
                               ("allskip", 0x10, c["allskip"])):
             if _chg(c, key):

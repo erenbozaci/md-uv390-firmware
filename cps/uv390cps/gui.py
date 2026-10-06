@@ -7,7 +7,7 @@ from PyQt5.QtCore import QSettings, QStandardPaths, Qt, QThread, QTimer, pyqtSig
 from PyQt5.QtGui import QBrush, QColor, QKeySequence
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                              QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
-                             QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar,
+                             QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar,
                              QPushButton, QScrollArea, QShortcut, QSizePolicy, QSpinBox, QSplitter, QStackedWidget,
                              QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -121,12 +121,16 @@ class Members(QWidget):
     """Ordered list of numbers (channels in a zone, contacts in a TG list) with add / remove / move."""
     changed = pyqtSignal()
 
-    def __init__(self, name_of, universe, limit, noun):
+    def __init__(self, name_of, universe, limit, noun, open_cb=None):
         super().__init__()
+        self.open_cb = open_cb
         self.name_of, self.universe, self.limit_of, self.noun = name_of, universe, limit, noun
         self.values = []
         self.list = QListWidget()
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self.menu)
+        self.list.itemDoubleClicked.connect(lambda it: self.open(it.data(Qt.UserRole)))
         self.count = QLabel()
         self.count.setObjectName("muted")
         add = QPushButton("Add…")
@@ -160,6 +164,36 @@ class Members(QWidget):
             if v in select:
                 it.setSelected(True)
         self.count.setText("%d / %d" % (len(self.values), self.limit_of()))
+
+    def open(self, n):
+        if self.open_cb and n is not None:
+            self.open_cb(n)
+
+    def menu(self, pos):
+        item = self.list.itemAt(pos)
+        if item is None:
+            return
+        if not item.isSelected():
+            self.list.clearSelection()
+            item.setSelected(True)
+        many = len(self.list.selectedItems()) > 1
+        m = QMenu(self)
+        edit = m.addAction("Edit %s…" % self.noun)
+        edit.setEnabled(bool(self.open_cb) and not many)
+        m.addSeparator()
+        up = m.addAction("Move up")
+        down = m.addAction("Move down")
+        m.addSeparator()
+        rem = m.addAction("Remove from list")
+        act = m.exec_(self.list.viewport().mapToGlobal(pos))
+        if act is edit:
+            self.open(item.data(Qt.UserRole))
+        elif act is up:
+            self.move(-1)
+        elif act is down:
+            self.move(1)
+        elif act is rem:
+            self.remove()
 
     def add(self):
         free = [(n, nm) for n, nm in self.universe() if n not in self.values]
@@ -230,7 +264,8 @@ class Form(QWidget):
     def __init__(self, fields):
         super().__init__()
         self.fields = fields
-        self.rec = None
+        self.rec = None         # first selected record
+        self.recs = []          # all selected records, edits go to every one of them
         self.w = {}
         self.layout_ = QFormLayout(self)
         self.layout_.setLabelAlignment(Qt.AlignRight | Qt.AlignTop)
@@ -304,8 +339,11 @@ class Form(QWidget):
         self.w[key] = (w, get, put, f)
         self.layout_.addRow(f["label"], w)
 
-    def bind(self, rec):
-        self.rec = None
+    def bind(self, recs):
+        if recs is not None and not isinstance(recs, list):
+            recs = [recs]
+        rec = recs[0] if recs else None
+        self.rec, self.recs = None, []
         for key, (w, get, put, f) in self.w.items():
             if f["kind"] == "ref":
                 w.blockSignals(True)
@@ -318,13 +356,13 @@ class Form(QWidget):
             if rec is not None:
                 put(rec[key])
             w.blockSignals(False)
-        self.rec = rec
+        self.rec, self.recs = rec, recs or []
         self._visibility()
 
     def _visibility(self):
         for key, (w, get, put, f) in self.w.items():
             show = f.get("show")
-            vis = self.rec is not None and (show is None or show(self.rec))
+            vis = self.rec is not None and (show is None or show(self.rec)) and not (f.get("single") and len(self.recs) > 1)
             w.setVisible(vis)
             lab = self.layout_.labelForField(w)
             if lab:
@@ -339,7 +377,10 @@ class Form(QWidget):
             w.setStyleSheet("color: #d1242f")
             return
         w.setStyleSheet("")
-        self.rec[key] = v
+        show = f.get("show")
+        for r in self.recs:
+            if show is None or show(r):
+                r[key] = list(v) if isinstance(v, list) else v
         self._visibility()
         self.edited.emit(key)
 
@@ -375,6 +416,7 @@ class Page(QWidget):
         self.table.setHorizontalHeaderLabels(self.columns)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(0, Qt.AscendingOrder)
@@ -399,6 +441,11 @@ class Page(QWidget):
         rl.addWidget(self.hint)
         rl.addWidget(scroll)
         self.scroll = scroll
+        self.banner = QLabel()
+        self.banner.setWordWrap(True)
+        self.banner.setStyleSheet("background: rgba(31,111,235,40); border-radius: 6px; padding: 8px;")
+        self.banner.setVisible(False)
+        rl.insertWidget(0, self.banner)
         scroll.setVisible(False)
 
         split = QSplitter()
@@ -492,22 +539,28 @@ class Page(QWidget):
             hide = bool(t) and not any(t in (self.table.item(r, c).text().lower()) for c in range(self.table.columnCount()))
             self.table.setRowHidden(r, hide)
 
+    def selected_keys(self):
+        return [self.table.item(i.row(), 0).data(Qt.UserRole) for i in self.table.selectionModel().selectedRows()]
+
     def selected(self):
-        key = self.current_key()
-        rec = self.find(key) if key is not None else None
-        self.hint.setVisible(rec is None)
-        self.scroll.setVisible(rec is not None)
-        self.b_dup.setEnabled(rec is not None)
-        self.b_del.setEnabled(rec is not None)
-        self.form.bind(rec)
+        recs = [r for r in (self.find(k) for k in self.selected_keys()) if r is not None]
+        many = len(recs) > 1
+        self.hint.setVisible(not recs)
+        self.scroll.setVisible(bool(recs))
+        self.banner.setVisible(many)
+        if many:
+            self.banner.setText("%d %ss selected. Only the fields you change are applied to all of them." % (len(recs), self.noun))
+        self.b_dup.setEnabled(len(recs) == 1)
+        self.b_del.setEnabled(bool(recs))
+        self.form.bind(recs or None)
 
     def on_edited(self, key):
-        rec = self.form.rec
-        r = self.row_index(self.key_of(rec))
-        if r is not None:
-            self.table.setSortingEnabled(False)
-            self.fill_row(r, rec)
-            self.table.setSortingEnabled(True)
+        self.table.setSortingEnabled(False)
+        for rec in self.form.recs:
+            r = self.row_index(self.key_of(rec))
+            if r is not None:
+                self.fill_row(r, rec)
+        self.table.setSortingEnabled(True)
         self.win.changed()
 
     def add(self):
@@ -522,7 +575,7 @@ class Page(QWidget):
 
     def duplicate(self):
         rec = self.find(self.current_key())
-        if rec is None:
+        if rec is None or len(self.selected_keys()) != 1:
             return
         key = self.create()
         if key is None:
@@ -562,11 +615,11 @@ class ChannelPage(Page):
         digital = lambda r: r["mode"] == "DMR"
         analog = lambda r: r["mode"] == "FM"
         self.fields = [
-            dict(key="name", label="Name", kind="text"),
+            dict(key="name", label="Name", kind="text", single=True),
             dict(key="mode", label="Mode", kind="combo", items=[("FM", "Analog FM"), ("DMR", "Digital DMR")]),
             dict(key="rx", label="RX frequency", kind="freq"),
             dict(key="tx", label="TX frequency", kind="freq"),
-            dict(key="power", label="Power", kind="combo", items=[("Low", "Low"), ("High", "High")]),
+            dict(key="power", label="Power", kind="combo", items=list(enumerate(codeplug.POWER_LABELS))),
             dict(key="bw", label="Bandwidth", kind="combo", show=analog, items=[("12.5", "12.5 kHz"), ("25", "25 kHz")]),
             dict(key="rxtone", label="RX tone", kind="tone", show=analog),
             dict(key="txtone", label="TX tone", kind="tone", show=analog),
@@ -588,7 +641,8 @@ class ChannelPage(Page):
     def row_of(self, c):
         digital = c["mode"] == "DMR"
         contact = self.win.cp.contacts.get(c["contact"])
-        return (c["number"], c["name"], c["mode"], c["rx"], c["tx"], c["power"], "" if digital else c["bw"],
+        return (c["number"], c["name"], c["mode"], c["rx"], c["tx"], codeplug.POWER_LABELS[c["power"]]
+                if c["power"] < len(codeplug.POWER_LABELS) else str(c["power"]), "" if digital else c["bw"],
                 "" if digital else c["rxtone"], "" if digital else c["txtone"],
                 c["colour"] if digital else "", c["slot"] if digital else "",
                 (contact["name"] if contact else "") if digital else "")
@@ -602,7 +656,7 @@ class ChannelPage(Page):
     def selected(self):
         super().selected()
         rec = self.form.rec
-        self.simplex = rec is not None and rec["rx"] == rec["tx"]
+        self.simplex = rec is not None and len(self.form.recs) == 1 and rec["rx"] == rec["tx"]
 
     def on_edited(self, key):
         rec = self.form.rec
@@ -625,7 +679,7 @@ class ContactPage(Page):
     noun = "contact"
     columns = ["No", "Name", "DMR ID", "Type"]
     fields = [
-        dict(key="name", label="Name", kind="text"),
+        dict(key="name", label="Name", kind="text", single=True),
         dict(key="id", label="DMR ID / Talkgroup", kind="spin", range=(1, 16777215)),
         dict(key="type", label="Call type", kind="combo", items=[(t, t) for t in CALL_TYPES]),
     ]
@@ -654,10 +708,11 @@ class TGListPage(Page):
     def __init__(self, win):
         cp = win.cp_getter
         self.fields = [
-            dict(key="name", label="Name", kind="text"),
-            dict(key="contacts", label="Contacts", kind="members", make=lambda: Members(
+            dict(key="name", label="Name", kind="text", single=True),
+            dict(key="contacts", label="Contacts", kind="members", single=True, make=lambda: Members(
                 lambda n: cp().contacts[n]["name"] if n in cp().contacts else "(missing)",
-                lambda: [(n, c["name"]) for n, c in sorted(cp().contacts.items())], lambda: 32, "contact")),
+                lambda: [(n, c["name"]) for n, c in sorted(cp().contacts.items())], lambda: 32, "contact",
+                lambda n: win.goto(2, n))),
         ]
         super().__init__(win)
 
@@ -690,10 +745,11 @@ class ZonePage(Page):
     def __init__(self, win):
         cp = win.cp_getter
         self.fields = [
-            dict(key="name", label="Name", kind="text"),
-            dict(key="channels", label="Channels", kind="members", make=lambda: Members(
+            dict(key="name", label="Name", kind="text", single=True),
+            dict(key="channels", label="Channels", kind="members", single=True, make=lambda: Members(
                 lambda n: cp().channels[n]["name"] if n in cp().channels else "(missing)",
-                lambda: [(n, c["name"]) for n, c in sorted(cp().channels.items())], lambda: cp().per_zone, "channel")),
+                lambda: [(n, c["name"]) for n, c in sorted(cp().channels.items())], lambda: cp().per_zone, "channel",
+                lambda n: win.goto(1, n))),
         ]
         super().__init__(win)
 
@@ -794,6 +850,7 @@ class MainWindow(QMainWindow):
         self.cp = None
         self.radio_info = None
         self.thread = None
+        self.finishing = []
         self.cp_getter = lambda: self.cp
 
         self.nav = QListWidget()
@@ -871,6 +928,14 @@ class MainWindow(QMainWindow):
         self.pages[0].refresh()
         self.update_dirty()
 
+    def goto(self, page, key):
+        """Jump to a record on another page (used by the right click menus)."""
+        p = self.pages[page]
+        self.nav.setCurrentRow(page)
+        p.search.clear()
+        p.table.clearSelection()
+        p.select_key(key)
+
     def changed(self):
         self.timer.start(250)
 
@@ -895,6 +960,8 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.settings.setValue("geometry", self.saveGeometry())
+        for t in ([self.thread] if self.thread else []) + self.finishing:
+            t.wait(5000)
         e.accept()
 
     def revert(self):
@@ -908,7 +975,10 @@ class MainWindow(QMainWindow):
         self.pages[0].read_btn.setEnabled(not on)
         self.b_write.setEnabled(False if on else self.b_write.isEnabled())
         if not on:
-            self.thread = None
+            t, self.thread = self.thread, None
+            if t is not None:       # keep the QThread alive until run() has really returned
+                self.finishing.append(t)
+                t.finished.connect(lambda t=t: self.finishing.remove(t) if t in self.finishing else None)
             self.update_dirty()
 
     def on_progress(self, n, t, text=""):
