@@ -46,6 +46,10 @@ GITVERSION := $(shell git -c safe.directory='*' -C $(CURDIR) rev-parse --short H
 DEFS += -DGITVERSION=\"$(GITVERSION)\"
 
 # DEMO_MESSAGES=1 puts a few sample messages in the inbox at boot (to look at the Messages screens), never for a release
+# DEBUG_RX=1: every received DMR data packet is shown in the inbox as hex (header + payload), to see what other radios send; never for a release
+ifeq ($(DEBUG_RX),1)
+DEFS += -DMESSAGES_DEBUG_RX
+endif
 ifeq ($(DEMO_MESSAGES),1)
 DEFS += -DMESSAGES_DEMO
 endif
@@ -158,7 +162,7 @@ SRC_DIR          := $(abspath $(CURDIR)/..)
 CONTAINER_RUN = $(CONTAINER_ENGINE) run --rm \
                 -v $(SRC_DIR):/src:Z \
                 -w /src/MDUV380_firmware \
-                -e PLATFORM=$(PLATFORM) -e VARIANT=$(VARIANT) -e DEMO_MESSAGES=$(DEMO_MESSAGES) \
+                -e PLATFORM=$(PLATFORM) -e VARIANT=$(VARIANT) -e DEMO_MESSAGES=$(DEMO_MESSAGES) -e DEBUG_RX=$(DEBUG_RX) \
                 $(IMG_TAG)
 
 .PHONY: image build rebuild help

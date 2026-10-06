@@ -1,0 +1,31 @@
+name: cps
+on:
+  push:
+    paths: ['cps/**', '.github/workflows/cps.yml']
+  pull_request:
+    paths: ['cps/**']
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-22.04, name: linux}
+          - {os: windows-latest, name: windows}
+          - {os: macos-latest, name: macos}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cps
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r requirements.txt -r requirements-build.txt
+      - run: python -m PyInstaller --noconfirm --clean --windowed --name uv390cps --onefile run.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uv390cps-${{ matrix.name }}
+          path: cps/dist/*

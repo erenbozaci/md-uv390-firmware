@@ -117,3 +117,7 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 - Options -> Dual Watch -> "Row watch: On" (`DUALWATCH_WATCH`, needs "Dual screen"). `uiDualScreenWatchTick()` (called every loop from `applicationMain.c`) tunes the single receiver to the other row for 80 ms every 1.5 s (`WATCH_PEEK_*` in `uiDualScreen.c`), no carrier: puts the radio back; carrier: waits up to 500 ms for audio (a carrier with the wrong tone is ignored for 10 s) and listens until the audio has been gone for the Scan delay, then returns. The active row never changes (PTT always transmits on it; `uiDualScreenWatchAbort()` retunes before the TX screen is pushed); the heard row gets the `RX` badge.
 - Analog rows only for now: nothing happens while the active row is DMR, DMR rows are skipped (a DMR row needs colour code / slot / talkgroup set up to be heard). Keys do not stop it (unlike the old Dual Watch scan). The old scan (VFO quick menu, "Auto start", "On signal", ...) is unchanged and separate.
 - The radio state to restore is captured from `currentRadioDevice` (rx / tx frequency, DMR mode), `trxGetMode()`, `trxGetBandwidthIs25kHz()` and `currentChannelData->rxTone`.
+
+## DMR RX debug build
+
+- `DEBUG_RX=1 ./uv390.sh build` (`MESSAGES_DEBUG_RX`): every received DMR data packet (any DPF, any destination) lands in the inbox as hex, 33 bytes per message (10 header bytes, then payload incl. CRC-32). Used to see what other brands (Anytone, Baofeng) send. Never flash it for normal use or release; rebuild normally afterwards.

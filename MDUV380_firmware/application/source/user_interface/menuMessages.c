@@ -240,6 +240,12 @@ static void peerName(const messagingEntry_t *e, char *buf, size_t size, size_t m
 
 // One card of the list: item 0 is "New message". Plain: name, a < / > arrow for the direction, the time and the start of
 // the text; a blue dot and brighter text mark an unread message
+// The focused element is drawn inverted (filled with the text colour, text in the background colour): readable in sunlight
+static uint32_t invertedText(const uiWidgetPalette_t *pal)
+{
+	return (((pal->text & 0xFFU) < 0x80U) ? 0xFFFFFFU : 0x000000U);
+}
+
 static void drawCard(int16_t y, bool selected, int item)
 {
 	const uiWidgetPalette_t *pal = uiWidgetsPalette();
@@ -247,14 +253,15 @@ static void drawCard(int16_t y, bool selected, int item)
 
 	if (selected)
 	{
-		uiWidgetsFillRoundRect(2, y, (DISPLAY_SIZE_X - 4), (CARD_HEIGHT - 2), 3, pal->selFill);
-		bg = uiWidgetsColour(pal->selFill);
+		uiWidgetsFillRoundRect(2, y, (DISPLAY_SIZE_X - 4), (CARD_HEIGHT - 2), 3, pal->text);
+		bg = uiWidgetsColour(pal->text);
 	}
+	const uint32_t inv = invertedText(pal);
 
 	if (item == 0)
 	{
-		uiWidgetsText(8, (y + 7), "+", FONT_SIZE_3, pal->accent, bg);
-		uiWidgetsText(28, (y + 7), "New message", FONT_SIZE_3, pal->text, bg);
+		uiWidgetsText(8, (y + 7), "+", FONT_SIZE_3, (selected ? inv : pal->accent), bg);
+		uiWidgetsText(28, (y + 7), "New message", FONT_SIZE_3, (selected ? inv : pal->text), bg);
 		return;
 	}
 
@@ -268,7 +275,7 @@ static void drawCard(int16_t y, bool selected, int item)
 	char name[NAME_CHARS + 1];
 	char when[16];
 	char preview[PREVIEW_CHARS + 1];
-	const uint32_t textColour = (e->unread ? pal->text : pal->muted);
+	const uint32_t textColour = (selected ? inv : (e->unread ? pal->text : pal->muted));
 
 	peerName(e, name, sizeof(name), NAME_CHARS);
 	snprintf(when, sizeof(when), "%s ", (e->outgoing ? ">" : "<"));
@@ -277,11 +284,11 @@ static void drawCard(int16_t y, bool selected, int item)
 
 	if (e->unread)
 	{
-		uiWidgetsFillRoundRect(6, (y + 4), 6, 6, 3, pal->accent);
+		uiWidgetsFillRoundRect(6, (y + 4), 6, 6, 3, (selected ? inv : pal->accent));
 	}
 
 	uiWidgetsText(16, (y + 3), name, FONT_SIZE_2, textColour, bg);
-	uiWidgetsTextRight((DISPLAY_SIZE_X - 5), (y + 3), when, FONT_SIZE_2, pal->muted, bg);
+	uiWidgetsTextRight((DISPLAY_SIZE_X - 5), (y + 3), when, FONT_SIZE_2, (selected ? inv : pal->muted), bg);
 	uiWidgetsText(6, (y + 13), preview, FONT_SIZE_3, textColour, bg);
 }
 
@@ -396,6 +403,8 @@ static void drawCompose(void)
 	char buf[SCREEN_LINE_BUFFER_SIZE + 8];
 	char row[COMPOSE_CHARS + 1];
 	const int textLen = (int)strlen(composeText);
+	const uint32_t inv = invertedText(pal);
+	const uint16_t fbg = uiWidgetsColour(pal->text); // background of the focused box
 
 	menuDisplayTitle("New message");
 	// DMR ID is digits only, entered with the plain keypad
@@ -403,32 +412,38 @@ static void drawCompose(void)
 
 	// To
 	uiWidgetsText(6, 19, (dmr ? "TO  DMR ID" : "TO  CALLSIGN"), FONT_SIZE_2, ((field == COMPOSE_TO) ? pal->accent : pal->muted), bg);
-	uiWidgetsOutline(4, 28, 152, 18, 3, ((field == COMPOSE_TO) ? pal->accent : pal->separator), bg);
 	if (field == COMPOSE_TO)
 	{
-		uiWidgetsOutline(5, 29, 150, 16, 2, pal->accent, bg);
-	}
-	if (composeTo[0] != 0)
-	{
-		uiWidgetsText(10, 29, composeTo, FONT_SIZE_3, pal->text, bg);
+		uiWidgetsFillRoundRect(4, 28, 152, 18, 3, pal->text);
 	}
 	else
 	{
-		uiWidgetsText(10, 29, (dmr ? "number" : "callsign"), FONT_SIZE_3, pal->separator, bg);
+		uiWidgetsOutline(4, 28, 152, 18, 3, pal->separator, bg);
+	}
+	if (composeTo[0] != 0)
+	{
+		uiWidgetsText(10, 29, composeTo, FONT_SIZE_3, ((field == COMPOSE_TO) ? inv : pal->text), ((field == COMPOSE_TO) ? fbg : bg));
+	}
+	else
+	{
+		uiWidgetsText(10, 29, (dmr ? "number" : "callsign"), FONT_SIZE_3, ((field == COMPOSE_TO) ? inv : pal->separator), ((field == COMPOSE_TO) ? fbg : bg));
 	}
 	if ((field == COMPOSE_TO) && lastBlink)
 	{
-		uiWidgetsFillRoundRect((int16_t)(10 + (toPos * UI_WIDGET_CHAR_WIDTH)), 43, UI_WIDGET_CHAR_WIDTH, 2, 0, pal->accent);
+		uiWidgetsFillRoundRect((int16_t)(10 + (toPos * UI_WIDGET_CHAR_WIDTH)), 43, UI_WIDGET_CHAR_WIDTH, 2, 0, inv);
 	}
 
 	// Message
 	snprintf(buf, sizeof(buf), "%d/%d", textLen, (MESSAGING_TEXT_LEN - 1));
 	uiWidgetsText(6, 49, "MESSAGE", FONT_SIZE_2, ((field == COMPOSE_TEXT) ? pal->accent : pal->muted), bg);
 	uiWidgetsTextRight((DISPLAY_SIZE_X - 6), 49, buf, FONT_SIZE_2, ((textLen >= (MESSAGING_TEXT_LEN - 8)) ? pal->error : pal->muted), bg);
-	uiWidgetsOutline(4, 58, 152, 36, 3, ((field == COMPOSE_TEXT) ? pal->accent : pal->separator), bg);
 	if (field == COMPOSE_TEXT)
 	{
-		uiWidgetsOutline(5, 59, 150, 34, 2, pal->accent, bg);
+		uiWidgetsFillRoundRect(4, 58, 152, 36, 3, pal->text);
+	}
+	else
+	{
+		uiWidgetsOutline(4, 58, 152, 36, 3, pal->separator, bg);
 	}
 
 	{
@@ -437,7 +452,7 @@ static void drawCompose(void)
 
 		if (textLen == 0)
 		{
-			uiWidgetsText(10, 61, "type a message", FONT_SIZE_3, pal->separator, bg);
+			uiWidgetsText(10, 61, "type a message", FONT_SIZE_3, ((field == COMPOSE_TEXT) ? inv : pal->separator), ((field == COMPOSE_TEXT) ? fbg : bg));
 		}
 
 		for (int r = 0; r < COMPOSE_ROWS; r++)
@@ -447,24 +462,27 @@ static void drawCompose(void)
 			if (start < textLen)
 			{
 				snprintf(row, sizeof(row), "%.*s", COMPOSE_CHARS, &composeText[start]);
-				uiWidgetsText(10, (61 + (r * 16)), row, FONT_SIZE_3, pal->text, bg);
+				uiWidgetsText(10, (61 + (r * 16)), row, FONT_SIZE_3, ((field == COMPOSE_TEXT) ? inv : pal->text), ((field == COMPOSE_TEXT) ? fbg : bg));
 			}
 		}
 
 		if ((field == COMPOSE_TEXT) && lastBlink)
 		{
-			uiWidgetsFillRoundRect((int16_t)(10 + ((textPos % COMPOSE_CHARS) * UI_WIDGET_CHAR_WIDTH)), (int16_t)(61 + ((cursorLine - firstLine) * 16) + 14), UI_WIDGET_CHAR_WIDTH, 2, 0, pal->accent);
+			uiWidgetsFillRoundRect((int16_t)(10 + ((textPos % COMPOSE_CHARS) * UI_WIDGET_CHAR_WIDTH)), (int16_t)(61 + ((cursorLine - firstLine) * 16) + 14), UI_WIDGET_CHAR_WIDTH, 2, 0, inv);
 		}
 	}
 
 	// Quick (canned) message
-	uiWidgetsOutline(4, 98, 152, 14, 3, ((field == COMPOSE_CANNED) ? pal->accent : pal->separator), bg);
 	if (field == COMPOSE_CANNED)
 	{
-		uiWidgetsOutline(5, 99, 150, 12, 2, pal->accent, bg);
+		uiWidgetsFillRoundRect(4, 98, 152, 14, 3, pal->text);
+	}
+	else
+	{
+		uiWidgetsOutline(4, 98, 152, 14, 3, pal->separator, bg);
 	}
 	snprintf(buf, sizeof(buf), "< %s >", messagingGetCanned(cannedIndex));
-	uiWidgetsTextCentered(101, buf, FONT_SIZE_2, ((field == COMPOSE_CANNED) ? pal->text : pal->muted), bg);
+	uiWidgetsTextCentered(101, buf, FONT_SIZE_2, ((field == COMPOSE_CANNED) ? inv : pal->muted), ((field == COMPOSE_CANNED) ? fbg : bg));
 
 	if (field == COMPOSE_CANNED)
 	{

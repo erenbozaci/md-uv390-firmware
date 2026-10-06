@@ -88,7 +88,11 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 
 		dmrRx.active = false;
 
+#if defined(MESSAGES_DEBUG_RX)
+		if ((len < 10U) || (blocks == 0U) || (blocks > DMR_RX_MAX_BLOCKS))
+#else
 		if ((len < 10U) || ((dpf != DMR_DPF_UNCONFIRMED) && (dpf != DMR_DPF_CONFIRMED)) || (blocks == 0U) || (blocks > DMR_RX_MAX_BLOCKS))
+#endif
 		{
 			return;
 		}
@@ -99,14 +103,21 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 		dmrRx.msg.src = ((uint32_t)data[5] << 16) | ((uint32_t)data[6] << 8) | data[7];
 
 		// Only keep messages addressed to us (private) or to the talkgroup currently in use (group)
+#if !defined(MESSAGES_DEBUG_RX)
 		if (dmrRx.msg.dst != (dmrRx.msg.group ? (trxTalkGroupOrPcId & 0xFFFFFFU) : trxDMRID))
 		{
 			return;
 		}
+#endif
 
 		dmrRx.confirmed = (dpf == DMR_DPF_CONFIRMED);
 		dmrRx.blocksLeft = blocks;
 		dmrRx.msg.len = 0;
+#if defined(MESSAGES_DEBUG_RX)
+		memcpy(dmrRx.msg.data, data, 10U); // raw header first
+		dmrRx.msg.len = 10;
+		dmrRx.confirmed = false;
+#endif
 		dmrRx.active = true;
 	}
 	else if (dmrRx.active && ((dataType == DMR_DATA_TYPE_RATE_1_2) || (dataType == DMR_DATA_TYPE_RATE_3_4) || (dataType == DMR_DATA_TYPE_RATE_1)))
@@ -131,11 +142,13 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 			// Last block ends with the CRC-32 of the whole message (already verified by the chip)
 			if ((dmrRx.msg.len > DMR_RX_CRC32_LEN) && (dmrRxMailboxReady == false))
 			{
+#if !defined(MESSAGES_DEBUG_RX)
 				dmrRx.msg.len -= DMR_RX_CRC32_LEN;
 				if (dmrRx.msg.pad < dmrRx.msg.len)
 				{
 					dmrRx.msg.len -= dmrRx.msg.pad;
 				}
+#endif
 				memcpy(&dmrRxMailbox, &dmrRx.msg, sizeof(dmrRxMailbox));
 				__DMB(); // the message must be fully written before the main loop sees the flag
 				dmrRxMailboxReady = true;
@@ -224,10 +237,24 @@ void messagingTick(void)
 
 		snprintf(peer, sizeof(peer), "%u", (unsigned int)dmrRxMailbox.src);
 
+#if defined(MESSAGES_DEBUG_RX)
+		// 33 bytes of hex per message (header 10 bytes, then payload incl. the CRC-32 at the end)
+		for (uint16_t off = 0; (off < dmrRxMailbox.len) && (off < 66U); off += 33U)
+		{
+			uint16_t n = ((dmrRxMailbox.len - off) > 33U) ? 33U : (dmrRxMailbox.len - off);
+
+			for (uint16_t k = 0; k < n; k++)
+			{
+				snprintf(&text[k * 2U], 3, "%02X", dmrRxMailbox.data[off + k]);
+			}
+			messagingReceive(MESSAGING_TRANSPORT_DMR, peer, text);
+		}
+#else
 		if (dmrExtractText(dmrRxMailbox.data, dmrRxMailbox.len, text, sizeof(text)) > 0U)
 		{
 			messagingReceive(MESSAGING_TRANSPORT_DMR, peer, text);
 		}
+#endif
 
 		dmrRxMailboxReady = false;
 	}

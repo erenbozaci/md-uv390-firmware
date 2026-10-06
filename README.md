@@ -17,11 +17,11 @@ R20260131 source release:
 | Feature | What it does | Status |
 |---|---|---|
 | **Dual screen (Anytone style)** | Two independent rows, A on top and B below. Each row is either a VFO or a channel with its **own zone**. Up/Down select the row, the red key switches the active row between VFO and channel, the rotary changes the frequency / channel. Coloured badges (`C004`, `DMR`/`ANA`), `RX` badge while receiving, `Menü` label. | Working, tested on the radio |
-| **Row watch** | With the dual screen, the radio looks at the other row every 1.5 s. A signal there is heard (an `RX` badge shows on that row) and the radio returns to the active row when it ends; PTT always transmits on the active row. Analog rows only for now. | Implemented, untested on air |
+| **Row watch** | With the dual screen, the radio looks at the other row for a moment every 1.5 s, but only after the active row has been quiet for 3 s (no cuts in a conversation). A signal there is heard (an `RX` badge shows on that row) and the radio returns to the active row when it ends; PTT always transmits on the active row. Analog rows only for now. | Implemented, untested on air |
 | **Dual Watch options** | Options → Dual Watch (screen title "DW Options"): scan speed, home side, "Switch" (stop and listen on a signal on either side) or "Stay" (never leave the home side, a beep tells you that the other side is active), second side can be a zone channel. | Implemented, only partly tested |
-| **Messages** | Inbox, compose, canned messages, new-message beep. | Implemented, lightly tested |
+| **Messages** | Inbox, compose, canned messages, new-message beep. The selected item is drawn inverted so it can be read in sunlight. | Implemented, lightly tested |
 | **APRS messages** | Send `:CALLSIGN :text{id` through the existing AFSK encoder (analog channels). No APRS receive. | Implemented, needs an APRS config on the channel |
-| **DMR SMS** | Receive and send private text messages (DMR data call driven by the HR-C6000, following the chip manual). | **Experimental, never tested on air** |
+| **DMR SMS** | Receive and send private text messages (DMR data call driven by the HR-C6000, following the chip manual). | **Experimental.** Tried against an Anytone and a Baofeng DM-32UV: not interoperable yet (our TX is not the standard IP/UDP text format, RX loses the last character and misses some packets). `DEBUG_RX=1 ./uv390.sh build` makes a build that shows received packets as hex, to find out the formats |
 | **Tools** | `uv390.sh` (build / flash / screenshot), `screen_grab.py` (read the radio's screen over USB). | Working |
 | Fixes | Codec interface rewritten with C function pointers (builds with a current GCC), firmware version shown correctly when built in a container. | Done |
 
@@ -42,7 +42,7 @@ Taken from the real radio with `./uv390.sh doc <name>`.
 
 ## Key reference for the dual screen
 
-Turn it on in **Options → Dual Watch → "Dual scr: On"**.
+Turn it on in **Options → DW Options → "Dual screen: On"**.
 
 | Key | Action |
 |---|---|
