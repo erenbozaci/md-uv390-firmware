@@ -121,3 +121,9 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 ## DMR RX debug build
 
 - `DEBUG_RX=1 ./uv390.sh build` (`MESSAGES_DEBUG_RX`): every received DMR data packet (any DPF, any destination) lands in the inbox as hex, 33 bytes per message (10 header bytes, then payload incl. CRC-32). Used to see what other brands (Anytone, Baofeng) send. Never flash it for normal use or release; rebuild normally afterwards.
+
+## Desktop CPS (`cps/`, PyQt5)
+
+- `cps/uv390cps/`: `protocol.py` (serial 'R' read, 'X' sector write, 'C' commands), `codeplug.py` (editable model: records keep raw bytes + a `_orig` snapshot, only edited fields are re-encoded, `build_image()` + `Image.diff()` give the changed byte spans), `gui.py` (sidebar, Page/Form classes, WriteThread). Run `python cps/run.py`; build with `cps/build.sh`; CI is `.github/workflows/cps.yml`.
+- MDUV380 layout: "EEPROM" = raw flash 0x0000.., "flash" part = raw 0x20000 + OpenGD77 address. Channels 1-128 at 0x3790 (bitmap 0x3780), 129+ at 0x20000+0x7B1C0 (7 banks of 128, 16-byte bitmap before each), contacts 0x20000+0x87620 (24 B), TG lists 0x20000+0x8D6A0 (80 B, length table at 0x8D620: firmware treats length 0 as non-existent), zones 0x8030 (176 B, in-use bitmap 0x8010), callsign/DMR ID 0xE0/0xE8 (BCD big endian).
+- Write = 'C',0 (CPS screen), per 4 KiB sector 'X',1 / 'X',2 (<=128 B chunks) / 'X',3, then 'C',6,0 (rebuild caches, save, reboot). Write was verified offline (byte exact round trip) but **not yet tested on the real radio**.
