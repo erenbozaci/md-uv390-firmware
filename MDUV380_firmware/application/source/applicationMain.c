@@ -62,6 +62,7 @@
 // Couldn't declare into aprs.h, due to header cross-dependence.
 void aprsBeaconingTick(uiEvent_t *ev);
 #include "functions/messaging.h"
+#include "functions/fiveTone.h"
 #include "user_interface/uiDualScreen.h"
 
 volatile bool mainIsRunning = true;
@@ -959,6 +960,16 @@ void applicationMainTask(void)
 		if (HRC6000DataTxIsActive())
 		{
 			if (HRC6000DataTxTakeStartRequest())
+			{
+				button_event = EVENT_BUTTON_CHANGE;
+			}
+			buttons |= BUTTON_PTT;
+		}
+
+		// 5 tone selective call: key up and hold the (software) PTT until the code has been sent
+		if (fiveToneCallHoldsPtt())
+		{
+			if (fiveToneCallTakeStartRequest())
 			{
 				button_event = EVENT_BUTTON_CHANGE;
 			}

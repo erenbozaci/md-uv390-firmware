@@ -417,6 +417,7 @@ bool settingsRestoreDefaultSettings(void)
 #endif
 
 	nonVolatileSettings.lastTalkerOnScreenTimer = 0U;
+	memset(nonVolatileSettings.fiveTone, 0, sizeof(nonVolatileSettings.fiveTone)); // 5 tone: ID 00000, ZVEI1, PTT ID off
 
 #if defined(PLATFORM_RD5R)
 	nonVolatileSettings.currentChannelIndexInZone = 0;

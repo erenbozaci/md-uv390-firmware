@@ -345,6 +345,7 @@ enum MENU_SCREENS
 	MENU_THEME_ITEMS_BROWSER,
 	MENU_COLOUR_PICKER,
 #endif
+	MENU_FIVE_TONE, // Options -> 5 Tone (this fork, no quickkey: the quickkey range 0..31 is full)
 	NUM_MENU_ENTRIES
 };
 
@@ -476,6 +477,7 @@ menuStatus_t menuLanguage(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuResetCustomData(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuMessages(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuDualWatchOptions(uiEvent_t *event, bool isFirstRun);
+menuStatus_t menuFiveTone(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuPrivateCall(uiEvent_t *event, bool isFirstRun);
 menuStatus_t uiMessageBox(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuSatelliteScreen(uiEvent_t *ev, bool isFirstRun);

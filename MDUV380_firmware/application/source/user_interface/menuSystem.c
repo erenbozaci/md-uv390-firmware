@@ -114,6 +114,7 @@ menuDataGlobal_t menuDataGlobal =
 				NULL,// Theme items browser
 				NULL,// Colour picker
 #endif
+				NULL,// 5 Tone
 		}
 };
 
@@ -179,6 +180,7 @@ static menuFunctionData_t menuFunctions[] =
 		{ menuThemeItemsBrowser,    NULL, NULL, 0 },
 		{ menuColourPicker,         NULL, NULL, 0 },
 #endif
+		{ menuFiveTone,             NULL, NULL, 0 },
 };
 
 static void menuSystemCheckForFirstEntryAudible(menuStatus_t status)
@@ -714,6 +716,7 @@ static const menuItemNewData_t optionsMenuItems[] =
 #if defined(HAS_DUAL_WATCH_OPTIONS)
 	{ 143, MENU_DUAL_WATCH },// stringOffset 143 = .dual_watch field
 #endif
+	{ 143, MENU_FIVE_TONE },// any string, the name is set in menuDisplayMenuList.c
 	{ 280, MENU_RESET_CUSTOM_DATA },// stringOffset 280 = .reset_configuration field (added at end of stringsTable_t)
 };
 

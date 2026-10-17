@@ -264,6 +264,7 @@ typedef struct
 	uint8_t				gpsModeAndBaudsIndex;
 #endif
 	uint8_t				lastTalkerOnScreenTimer; // in seconds, 0..30
+	uint8_t				fiveTone[3]; // 5 tone ID / standard / PTT ID, see fiveTone.c (fills the 3 bytes of tail padding, 0 = defaults)
 } settingsStruct_t;
 
 #if !(defined(PLATFORM_RD5R) || defined(PLATFORM_MD9600))

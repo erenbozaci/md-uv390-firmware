@@ -27,6 +27,7 @@
  */
 #include "hardware/HR-C6000.h"
 #include "functions/sound.h"
+#include "functions/fiveTone.h"
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
@@ -150,6 +151,11 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 				}
 
 				trxSetTX();
+
+				if (isSatelliteScreen == false)
+				{
+					fiveToneTxStarted(); // 5 tone selective call or PTT ID (start), blocking
+				}
 
 #if !defined(PLATFORM_GD77S)
 				if (isSatelliteAPRS)
@@ -462,6 +468,11 @@ static void handleEvent(uiEvent_t *ev)
 
 			if (trxGetMode() == RADIO_MODE_ANALOG)
 			{
+				if ((transmitError == false) && (isSatelliteScreen == false))
+				{
+					fiveToneTxEnding(); // 5 tone PTT ID (end), blocking, still on air
+				}
+
 				// In analog mode. Stop transmitting immediately
 				LedWrite(LED_RED, 0);
 

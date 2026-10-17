@@ -127,6 +127,10 @@ static void updateScreen(bool isFirstRun)
 					menuName = "DW Options";
 				}
 #endif
+				if (menuDataGlobal.currentMenuList[mNum].menuNum == MENU_FIVE_TONE)
+				{
+					menuName = "5 Tone";
+				}
 				menuDisplayEntry(i, mNum, menuName, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
 
 				if (i == 0)
