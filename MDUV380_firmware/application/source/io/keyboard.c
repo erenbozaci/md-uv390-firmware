@@ -34,6 +34,7 @@
 #include "interfaces/gpio.h"
 #include "interfaces/adc.h"
 #include "io/buttons.h"
+#include "user_interface/menuSystem.h"
 
 // Keyboard Keys
 typedef struct
@@ -109,6 +110,22 @@ static const char keypadAlphaMap[11][31] = {
 		"wxyz9WXYZ",
 		"*"
 };
+
+// Upper case only, used on the Messages screen (one press less per letter)
+static const char keypadAlphaMapUpper[11][31] = {
+		"0 ",
+		"1.!,@-:?()~/[]#<>=*+$%'`&|_^{}",
+		"ABC2",
+		"DEF3",
+		"GHI4",
+		"JKL5",
+		"MNO6",
+		"PQRS7",
+		"TUV8",
+		"WXYZ9",
+		"*"
+};
+#define ALPHA_MAP  ((menuSystemGetCurrentMenuNumber() == MENU_MESSAGES) ? keypadAlphaMapUpper : keypadAlphaMap)
 
 #define KEYBOARD_KEYS_PER_ROW  8U
 
@@ -541,7 +558,7 @@ void keyboardCheckKeyEvent(keyboardCode_t *keys, int *event)
 
 			if (tmp_timer_keypad == 0 && keypadAlphaKey != 0)
 			{
-				keys->key = keypadAlphaMap[keypadAlphaKey - 1][keypadAlphaIndex];
+				keys->key = ALPHA_MAP[keypadAlphaKey - 1][keypadAlphaIndex];
 				keys->event = KEY_MOD_PRESS;
 				*event = EVENT_KEY_CHANGE;
 				keypadAlphaKey = 0;
@@ -598,7 +615,7 @@ void keyboardCheckKeyEvent(keyboardCode_t *keys, int *event)
 					if (newAlphaKey == keypadAlphaKey)
 					{
 						keypadAlphaIndex++;
-						if (keypadAlphaMap[keypadAlphaKey - 1][keypadAlphaIndex] == 0)
+						if (ALPHA_MAP[keypadAlphaKey - 1][keypadAlphaIndex] == 0)
 						{
 							keypadAlphaIndex = 0;
 						}
@@ -609,12 +626,12 @@ void keyboardCheckKeyEvent(keyboardCode_t *keys, int *event)
 				{
 					if (newAlphaKey == keypadAlphaKey)
 					{
-						keys->key =	keypadAlphaMap[keypadAlphaKey - 1][keypadAlphaIndex];
+						keys->key =	ALPHA_MAP[keypadAlphaKey - 1][keypadAlphaIndex];
 						keys->event = KEY_MOD_PREVIEW;
 					}
 					else
 					{
-						keys->key = keypadAlphaMap[keypadAlphaKey - 1][keypadAlphaIndex];
+						keys->key = ALPHA_MAP[keypadAlphaKey - 1][keypadAlphaIndex];
 						keys->event = KEY_MOD_PRESS;
 						*event = EVENT_KEY_CHANGE;
 						keypadAlphaKey = newAlphaKey;
