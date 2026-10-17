@@ -40,7 +40,7 @@
 #define VIEW_CHARS       18  // characters per line of a message (8 px font, 160 px screen, room for the scroll marks)
 #define VIEW_ROWS        4   // lines of a message shown at once
 #define COMPOSE_CHARS    17  // characters per line inside the message box
-#define COMPOSE_ROWS     2
+#define COMPOSE_ROWS     4
 #define LIST_VISIBLE     3   // cards shown at once
 #define CARD_TOP         19
 #define CARD_HEIGHT      32
@@ -60,9 +60,10 @@ typedef enum
 
 enum
 {
+	// Compose is a 3 step wizard: To -> Message -> Send?
 	COMPOSE_TO = 0,
 	COMPOSE_TEXT,
-	COMPOSE_CANNED,
+	COMPOSE_CONFIRM,
 	NUM_COMPOSE_ITEMS
 };
 
@@ -110,7 +111,7 @@ static void startCompose(const char *peer)
 	}
 	toPos = strlen(composeTo);
 	textPos = 0;
-	cannedIndex = 0;
+	cannedIndex = -1; // the first arrow / knob step shows the first quick message
 	state = STATE_COMPOSE;
 	menuDataGlobal.numItems = NUM_COMPOSE_ITEMS;
 	// Start on the To field when it is empty, otherwise straight on the text
@@ -125,32 +126,19 @@ static void backToList(void)
 	menuDataGlobal.currentItemIndex = ((listItemIndex < menuDataGlobal.numItems) ? listItemIndex : (menuDataGlobal.numItems - 1));
 }
 
-// Local versions of moveCursor{Left,Right}InString(): those have a quirk for 16 chars long strings
-static void cursorLeft(char *str, int *pos, bool deleteChar)
-{
-	if (*pos > 0)
-	{
-		(*pos)--;
-		if (deleteChar)
-		{
-			memmove(&str[*pos], &str[*pos + 1], (strlen(str) - *pos));
-		}
-	}
-}
-
-static void cursorRight(char *str, int *pos, int max, bool insertSpace)
+// Text is only appended to: the red key deletes the last character. False when there is nothing left to delete.
+static bool deleteLast(char *str, int *pos)
 {
 	int len = strlen(str);
 
-	if (*pos < len)
+	if (len == 0)
 	{
-		if (insertSpace && (len < max))
-		{
-			memmove(&str[*pos + 1], &str[*pos], (len - *pos + 1));
-			str[*pos] = ' ';
-		}
-		(*pos)++;
+		return false;
 	}
+
+	str[len - 1] = 0;
+	*pos = (len - 1);
+	return true;
 }
 
 static int viewTotalRows(const messagingEntry_t *e)
@@ -398,103 +386,90 @@ static void drawCompose(void)
 {
 	const uiWidgetPalette_t *pal = uiWidgetsPalette();
 	const uint16_t bg = uiWidgetsThemeBackground();
-	const int field = menuDataGlobal.currentItemIndex;
+	const int step = menuDataGlobal.currentItemIndex;
 	const bool dmr = composeIsDmr();
 	char buf[SCREEN_LINE_BUFFER_SIZE + 8];
 	char row[COMPOSE_CHARS + 1];
 	const int textLen = (int)strlen(composeText);
 	const uint32_t inv = invertedText(pal);
-	const uint16_t fbg = uiWidgetsColour(pal->text); // background of the focused box
+	const uint16_t fbg = uiWidgetsColour(pal->text); // background of the input box
 
 	menuDisplayTitle("New message");
 	// DMR ID is digits only, entered with the plain keypad
-	keypadAlphaEnable = ((field == COMPOSE_TEXT) || ((field == COMPOSE_TO) && (dmr == false)));
+	keypadAlphaEnable = ((step == COMPOSE_TEXT) || ((step == COMPOSE_TO) && (dmr == false)));
 
-	// To
-	uiWidgetsText(6, 19, (dmr ? "TO  DMR ID" : "TO  CALLSIGN"), FONT_SIZE_2, ((field == COMPOSE_TO) ? pal->accent : pal->muted), bg);
-	if (field == COMPOSE_TO)
+	switch (step)
 	{
-		uiWidgetsFillRoundRect(4, 28, 152, 18, 3, pal->text);
-	}
-	else
-	{
-		uiWidgetsOutline(4, 28, 152, 18, 3, pal->separator, bg);
-	}
-	if (composeTo[0] != 0)
-	{
-		uiWidgetsText(10, 29, composeTo, FONT_SIZE_3, ((field == COMPOSE_TO) ? inv : pal->text), ((field == COMPOSE_TO) ? fbg : bg));
-	}
-	else
-	{
-		uiWidgetsText(10, 29, (dmr ? "number" : "callsign"), FONT_SIZE_3, ((field == COMPOSE_TO) ? inv : pal->separator), ((field == COMPOSE_TO) ? fbg : bg));
-	}
-	if ((field == COMPOSE_TO) && lastBlink)
-	{
-		uiWidgetsFillRoundRect((int16_t)(10 + (toPos * UI_WIDGET_CHAR_WIDTH)), 43, UI_WIDGET_CHAR_WIDTH, 2, 0, inv);
-	}
-
-	// Message
-	snprintf(buf, sizeof(buf), "%d/%d", textLen, (MESSAGING_TEXT_LEN - 1));
-	uiWidgetsText(6, 49, "MESSAGE", FONT_SIZE_2, ((field == COMPOSE_TEXT) ? pal->accent : pal->muted), bg);
-	uiWidgetsTextRight((DISPLAY_SIZE_X - 6), 49, buf, FONT_SIZE_2, ((textLen >= (MESSAGING_TEXT_LEN - 8)) ? pal->error : pal->muted), bg);
-	if (field == COMPOSE_TEXT)
-	{
-		uiWidgetsFillRoundRect(4, 58, 152, 36, 3, pal->text);
-	}
-	else
-	{
-		uiWidgetsOutline(4, 58, 152, 36, 3, pal->separator, bg);
-	}
-
-	{
-		int cursorLine = (textPos / COMPOSE_CHARS);
-		int firstLine = ((cursorLine >= COMPOSE_ROWS) ? (cursorLine - (COMPOSE_ROWS - 1)) : 0);
-
-		if (textLen == 0)
-		{
-			uiWidgetsText(10, 61, "type a message", FONT_SIZE_3, ((field == COMPOSE_TEXT) ? inv : pal->separator), ((field == COMPOSE_TEXT) ? fbg : bg));
-		}
-
-		for (int r = 0; r < COMPOSE_ROWS; r++)
-		{
-			int start = ((firstLine + r) * COMPOSE_CHARS);
-
-			if (start < textLen)
+		case COMPOSE_TO:
+			uiWidgetsText(6, 19, (dmr ? "1/3  TO DMR ID" : "1/3  TO CALLSIGN"), FONT_SIZE_2, pal->accent, bg);
+			uiWidgetsFillRoundRect(4, 32, 152, 22, 3, pal->text);
+			if (composeTo[0] != 0)
 			{
-				snprintf(row, sizeof(row), "%.*s", COMPOSE_CHARS, &composeText[start]);
-				uiWidgetsText(10, (61 + (r * 16)), row, FONT_SIZE_3, ((field == COMPOSE_TEXT) ? inv : pal->text), ((field == COMPOSE_TEXT) ? fbg : bg));
+				uiWidgetsText(10, 35, composeTo, FONT_SIZE_3, inv, fbg);
 			}
-		}
+			if (lastBlink)
+			{
+				uiWidgetsFillRoundRect((int16_t)(10 + (toPos * UI_WIDGET_CHAR_WIDTH)), 50, UI_WIDGET_CHAR_WIDTH, 2, 0, inv);
+			}
+			uiWidgetsTextCentered(64, (dmr ? "Type the number" : "Type the callsign"), FONT_SIZE_2, pal->muted, bg);
+			uiWidgetsSoftKeys("Next", NULL, ((composeTo[0] == 0) ? "Back" : "Del"));
+			break;
 
-		if ((field == COMPOSE_TEXT) && lastBlink)
+		case COMPOSE_TEXT:
 		{
-			uiWidgetsFillRoundRect((int16_t)(10 + ((textPos % COMPOSE_CHARS) * UI_WIDGET_CHAR_WIDTH)), (int16_t)(61 + ((cursorLine - firstLine) * 16) + 14), UI_WIDGET_CHAR_WIDTH, 2, 0, inv);
+			int cursorLine = (textPos / COMPOSE_CHARS);
+			int firstLine = ((cursorLine >= COMPOSE_ROWS) ? (cursorLine - (COMPOSE_ROWS - 1)) : 0);
+
+			snprintf(buf, sizeof(buf), "%d/%d", textLen, (MESSAGING_TEXT_LEN - 1));
+			uiWidgetsText(6, 19, "2/3  MESSAGE", FONT_SIZE_2, pal->accent, bg);
+			uiWidgetsTextRight((DISPLAY_SIZE_X - 6), 19, buf, FONT_SIZE_2, ((textLen >= (MESSAGING_TEXT_LEN - 8)) ? pal->error : pal->muted), bg);
+			uiWidgetsFillRoundRect(4, 28, 152, 68, 3, pal->text);
+
+			for (int r = 0; r < COMPOSE_ROWS; r++)
+			{
+				int start = ((firstLine + r) * COMPOSE_CHARS);
+
+				if (start < textLen)
+				{
+					snprintf(row, sizeof(row), "%.*s", COMPOSE_CHARS, &composeText[start]);
+					uiWidgetsText(10, (31 + (r * 16)), row, FONT_SIZE_3, inv, fbg);
+				}
+			}
+
+			if (lastBlink)
+			{
+				uiWidgetsFillRoundRect((int16_t)(10 + ((textPos % COMPOSE_CHARS) * UI_WIDGET_CHAR_WIDTH)), (int16_t)(31 + ((cursorLine - firstLine) * 16) + 14), UI_WIDGET_CHAR_WIDTH, 2, 0, inv);
+			}
+			uiWidgetsTextCentered(99, "Arrows: quick msg", FONT_SIZE_2, pal->muted, bg);
+			uiWidgetsSoftKeys("Next", NULL, ((textLen == 0) ? "Back" : "Del"));
 		}
-	}
+		break;
 
-	// Quick (canned) message
-	if (field == COMPOSE_CANNED)
-	{
-		uiWidgetsFillRoundRect(4, 98, 152, 14, 3, pal->text);
-	}
-	else
-	{
-		uiWidgetsOutline(4, 98, 152, 14, 3, pal->separator, bg);
-	}
-	snprintf(buf, sizeof(buf), "< %s >", messagingGetCanned(cannedIndex));
-	uiWidgetsTextCentered(101, buf, FONT_SIZE_2, ((field == COMPOSE_CANNED) ? inv : pal->muted), ((field == COMPOSE_CANNED) ? fbg : bg));
+		default: // COMPOSE_CONFIRM
+			uiWidgetsText(6, 19, "3/3  SEND?", FONT_SIZE_2, pal->accent, bg);
+			uiWidgetsText(6, 33, "TO", FONT_SIZE_2, pal->muted, bg);
+			uiWidgetsText(30, 30, composeTo, FONT_SIZE_3, pal->text, bg);
+			uiWidgetsOutline(4, 50, 152, 52, 3, pal->separator, bg);
+			for (int r = 0; r < 3; r++)
+			{
+				int start = (r * COMPOSE_CHARS);
 
-	if (field == COMPOSE_CANNED)
-	{
-		uiWidgetsSoftKeys("Use", "Knob:pick", "Back");
-	}
-	else if (field == COMPOSE_TEXT)
-	{
-		uiWidgetsSoftKeys("Send", "Knob:move", "Back");
-	}
-	else
-	{
-		uiWidgetsSoftKeys("Send", NULL, "Back");
+				if (start < textLen)
+				{
+					// The last preview row ends with ".." when the message is longer
+					if ((r == 2) && (textLen > (3 * COMPOSE_CHARS)))
+					{
+						snprintf(row, sizeof(row), "%.*s..", (COMPOSE_CHARS - 2), &composeText[start]);
+					}
+					else
+					{
+						snprintf(row, sizeof(row), "%.*s", COMPOSE_CHARS, &composeText[start]);
+					}
+					uiWidgetsText(10, (53 + (r * 16)), row, FONT_SIZE_3, pal->text, bg);
+				}
+			}
+			uiWidgetsSoftKeys("Send", NULL, "Back");
+			break;
 	}
 }
 
@@ -541,155 +516,153 @@ static void updateScreen(bool isFirstRun)
 	displayRender();
 }
 
+static void composeSend(void)
+{
+	keypadAlphaEnable = false;
+
+	if (txInhibitCheckAndWarn())
+	{
+		return;
+	}
+
+	if (composeIsDmr())
+	{
+		if (messagingSendDMR((uint32_t)atoi(composeTo), composeText))
+		{
+			// The main loop keys up (TX screen) and the HR-C6000 sends the data call
+			backToList();
+		}
+		else
+		{
+			soundSetMelody(MELODY_ERROR_BEEP);
+			statusLine1 = "Cannot send";
+			statusLine2 = "check DMR ID";
+			statusError = true;
+			state = STATE_STATUS;
+			statusTimeout = 1500;
+		}
+	}
+	else if (messagingSendAPRS(composeTo, composeText))
+	{
+		statusLine1 = "Sent";
+		statusLine2 = NULL;
+		statusError = false;
+		state = STATE_STATUS;
+		statusTimeout = 1500;
+	}
+	else
+	{
+		soundSetMelody(MELODY_ERROR_BEEP);
+		statusLine1 = "Cannot send";
+		statusLine2 = "check APRS cfg";
+		statusError = true;
+		state = STATE_STATUS;
+		statusTimeout = 1500;
+	}
+	updateScreen(false);
+}
+
+// Multi-tap text entry, appended at the end (preview first, then the committed character)
+static void composeTypeChar(uiEvent_t *ev, char *str, int *pos, int max)
+{
+	if ((ev->keys.event == KEY_MOD_PREVIEW) && (*pos < max))
+	{
+		str[*pos] = ev->keys.key;
+		updateScreen(false);
+	}
+	else if ((ev->keys.event == KEY_MOD_PRESS) && (*pos < max))
+	{
+		str[*pos] = ev->keys.key;
+		if ((*pos < (int)strlen(str)) && (*pos < (max - 1)))
+		{
+			(*pos)++;
+		}
+		updateScreen(false);
+	}
+}
+
 static void handleCompose(uiEvent_t *ev)
 {
-	const bool sk2 = BUTTONCHECK_DOWN(ev, BUTTON_SK2);
-	const int field = menuDataGlobal.currentItemIndex;
-	char *str = ((field == COMPOSE_TO) ? composeTo : composeText);
-	int *pos = ((field == COMPOSE_TO) ? &toPos : &textPos);
-	const int max = ((field == COMPOSE_TO) ? (MESSAGING_PEER_LEN - 1) : (MESSAGING_TEXT_LEN - 1));
+	const int step = menuDataGlobal.currentItemIndex;
+	char *str = ((step == COMPOSE_TO) ? composeTo : composeText);
+	int *pos = ((step == COMPOSE_TO) ? &toPos : &textPos);
+	const int max = ((step == COMPOSE_TO) ? (MESSAGING_PEER_LEN - 1) : (MESSAGING_TEXT_LEN - 1));
 
-	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
-		menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, NUM_COMPOSE_ITEMS);
-		updateScreen(false);
-		menuMessagesExitCode |= MENU_STATUS_LIST_TYPE;
-	}
-	else if (KEYCHECK_PRESS(ev->keys, KEY_UP))
-	{
-		menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, NUM_COMPOSE_ITEMS);
-		updateScreen(false);
-		menuMessagesExitCode |= MENU_STATUS_LIST_TYPE;
-	}
-	else if (KEYCHECK_SHORTUP(ev->keys, KEY_RIGHT))
-	{
-		if (field == COMPOSE_CANNED)
+		// Red: delete the last character; on an empty field (or on the last step) go one step back
+		if ((step == COMPOSE_CONFIRM) || (deleteLast(str, pos) == false))
 		{
-			cannedIndex = ((cannedIndex + 1) % MESSAGING_NUM_CANNED);
-		}
-		else if ((field == COMPOSE_TO) && composeIsDmr())
-		{
-			// digits are appended, nothing to move
-		}
-		else
-		{
-			cursorRight(str, pos, max, sk2);
-		}
-		updateScreen(false);
-	}
-	else if (KEYCHECK_SHORTUP(ev->keys, KEY_LEFT))
-	{
-		if (field == COMPOSE_CANNED)
-		{
-			cannedIndex = ((cannedIndex + MESSAGING_NUM_CANNED - 1) % MESSAGING_NUM_CANNED);
-		}
-		else if ((field == COMPOSE_TO) && composeIsDmr())
-		{
-			// backspace
-			if (toPos > 0)
+			if (step == COMPOSE_TO)
 			{
-				composeTo[--toPos] = 0;
+				backToList();
 			}
-		}
-		else
-		{
-			cursorLeft(str, pos, sk2);
+			else
+			{
+				menuDataGlobal.currentItemIndex = (step - 1);
+			}
 		}
 		updateScreen(false);
 	}
 	else if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
-		if (field == COMPOSE_CANNED)
+		if (step == COMPOSE_CONFIRM)
 		{
+			composeSend();
+		}
+		else if (str[0] == 0)
+		{
+			soundSetMelody(MELODY_ERROR_BEEP);
+		}
+		else
+		{
+			menuDataGlobal.currentItemIndex = (step + 1);
+			updateScreen(false);
+		}
+	}
+	else if (step == COMPOSE_TEXT)
+	{
+		// Arrows and knob step through the quick messages (they replace the text)
+		int dir = 0;
+
+		if (KEYCHECK_PRESS(ev->keys, KEY_DOWN) || KEYCHECK_SHORTUP(ev->keys, KEY_RIGHT))
+		{
+			dir = 1;
+		}
+		else if (KEYCHECK_PRESS(ev->keys, KEY_UP) || KEYCHECK_SHORTUP(ev->keys, KEY_LEFT))
+		{
+			dir = -1;
+		}
+
+		if (dir != 0)
+		{
+			cannedIndex = ((dir > 0) ? ((cannedIndex + 1) % MESSAGING_NUM_CANNED) : ((cannedIndex <= 0) ? (MESSAGING_NUM_CANNED - 1) : (cannedIndex - 1)));
 			memset(composeText, 0, sizeof(composeText));
 			strncpy(composeText, messagingGetCanned(cannedIndex), (sizeof(composeText) - 1U));
 			textPos = strlen(composeText);
-			menuDataGlobal.currentItemIndex = COMPOSE_TEXT;
-			updateScreen(false);
-		}
-		else if ((composeTo[0] == 0) || (composeText[0] == 0))
-		{
-			soundSetMelody(MELODY_ERROR_BEEP);
-			menuDataGlobal.currentItemIndex = ((composeTo[0] == 0) ? COMPOSE_TO : COMPOSE_TEXT);
 			updateScreen(false);
 		}
 		else
 		{
-			keypadAlphaEnable = false;
-
-			if (txInhibitCheckAndWarn())
-			{
-				return;
-			}
-
-			if (composeIsDmr())
-			{
-				if (messagingSendDMR((uint32_t)atoi(composeTo), composeText))
-				{
-					// The main loop keys up (TX screen) and the HR-C6000 sends the data call
-					backToList();
-				}
-				else
-				{
-					soundSetMelody(MELODY_ERROR_BEEP);
-					statusLine1 = "Cannot send";
-					statusLine2 = "check DMR ID";
-					statusError = true;
-					state = STATE_STATUS;
-					statusTimeout = 1500;
-				}
-			}
-			else if (messagingSendAPRS(composeTo, composeText))
-			{
-				statusLine1 = "Sent";
-				statusLine2 = NULL;
-				statusError = false;
-				state = STATE_STATUS;
-				statusTimeout = 1500;
-			}
-			else
-			{
-				soundSetMelody(MELODY_ERROR_BEEP);
-				statusLine1 = "Cannot send";
-				statusLine2 = "check APRS cfg";
-				statusError = true;
-				state = STATE_STATUS;
-				statusTimeout = 1500;
-			}
-			updateScreen(false);
+			composeTypeChar(ev, str, pos, max);
 		}
 	}
-	else if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	else if (step == COMPOSE_TO)
 	{
-		backToList();
-		updateScreen(false);
-	}
-	else if ((field == COMPOSE_TO) && composeIsDmr())
-	{
-		int keyval = menuGetKeypadKeyValue(ev, true);
+		if (composeIsDmr())
+		{
+			int keyval = menuGetKeypadKeyValue(ev, true);
 
-		if ((keyval != 99) && (toPos < DMR_ID_MAX_DIGITS))
-		{
-			composeTo[toPos++] = (char)('0' + keyval);
-			composeTo[toPos] = 0;
-			updateScreen(false);
-		}
-	}
-	else if (field != COMPOSE_CANNED)
-	{
-		if ((ev->keys.event == KEY_MOD_PREVIEW) && (*pos < max))
-		{
-			str[*pos] = ev->keys.key;
-			updateScreen(false);
-		}
-		else if ((ev->keys.event == KEY_MOD_PRESS) && (*pos < max))
-		{
-			str[*pos] = ev->keys.key;
-			if ((*pos < (int)strlen(str)) && (*pos < (max - 1)))
+			if ((keyval != 99) && (toPos < DMR_ID_MAX_DIGITS))
 			{
-				(*pos)++;
+				composeTo[toPos++] = (char)('0' + keyval);
+				composeTo[toPos] = 0;
+				updateScreen(false);
 			}
-			updateScreen(false);
+		}
+		else
+		{
+			composeTypeChar(ev, str, pos, max);
 		}
 	}
 }

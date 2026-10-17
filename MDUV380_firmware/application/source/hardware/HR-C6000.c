@@ -1944,15 +1944,14 @@ void hrc6000TimeslotInterruptHandler(void)
 					SPI0WritePageRegByteArray(0x02, 0x00, dataTx.blocks[dataTx.nextBlock], DMR_DATA_BLOCK_LEN);
 					SPI0WritePageRegByte(0x04, 0x41, 0x80);                    // Transmit during next Timeslot
 					SPI0WritePageRegByte(0x04, 0x50, DMR_DATA_REG50_RATE_1_2); // Data Type = 0111 (Rate 1/2 data), Data, LCSS = 0
-
-					if (++dataTx.nextBlock >= dataTx.numBlocks)
-					{
-						dataTx.sending = false; // Last block queued, the main loop can now release the (software) PTT
-					}
+					dataTx.nextBlock++;
 				}
 				else
 				{
 					SPI0WritePageRegByte(0x04, 0x41, 0x00);                    // Nothing more to send, wait for the TX to be stopped
+					// The last block was only queued in the previous active slot and is on air now: only from here
+					// can the main loop release the (software) PTT, otherwise a 1 block message was cut off.
+					dataTx.sending = false;
 				}
 
 				slotState = DMR_STATE_TX_1;
