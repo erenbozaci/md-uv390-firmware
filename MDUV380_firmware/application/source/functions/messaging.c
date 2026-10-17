@@ -54,6 +54,8 @@ static uint32_t nextSeq = 1;
 
 #define DMR_DPF_UNCONFIRMED       0x2U // data packet header, unconfirmed delivery
 #define DMR_DPF_CONFIRMED         0x3U // data packet header, confirmed delivery (2 bytes of SN/CRC9 per block)
+#define DMR_DPF_SHORT_RAW         0xEU // raw or status/precoded short data
+#define DMR_DPF_SHORT_DEFINED     0xDU // defined short data (seen from an Anytone)
 #define DMR_RX_MAX_BLOCKS         12U
 #define DMR_RX_MAX_BYTES          (DMR_RX_MAX_BLOCKS * 24U)
 #define DMR_RX_CRC32_LEN          4U
@@ -84,21 +86,44 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 	if (dataType == DMR_DATA_TYPE_HEADER)
 	{
 		uint8_t dpf = (data[0] & 0x0F);
-		uint8_t blocks = (data[8] & 0x7F);
+		uint8_t blocks;
+
+		if ((dpf == DMR_DPF_SHORT_DEFINED) || (dpf == DMR_DPF_SHORT_RAW))
+		{
+			// Short data: appended blocks = header octet 0 bits 5..4 (MSBs) + octet 1 bits 3..0 (Anytone SMS uses defined short data)
+			blocks = (uint8_t)((((data[0] >> 4) & 0x03U) << 4) | (data[1] & 0x0FU));
+		}
+		else
+		{
+			blocks = (data[8] & 0x7F);
+		}
 
 		dmrRx.active = false;
 
 #if defined(MESSAGES_DEBUG_RX)
-		if ((len < 10U) || (blocks == 0U) || (blocks > DMR_RX_MAX_BLOCKS))
+		// Show a header at once if the packet would not be reassembled (the full packet starts with the header anyway)
+		if ((len >= 10U) && (dmrRxMailboxReady == false) && ((blocks == 0U) || (blocks > DMR_RX_MAX_BLOCKS)))
+		{
+			dmrRxMailbox.src = ((uint32_t)data[5] << 16) | ((uint32_t)data[6] << 8) | data[7];
+			dmrRxMailbox.len = 10;
+			memcpy(dmrRxMailbox.data, data, 10U);
+			__DMB();
+			dmrRxMailboxReady = true;
+		}
+
+		if ((len < 10U) || (blocks == 0U))
 #else
-		if ((len < 10U) || ((dpf != DMR_DPF_UNCONFIRMED) && (dpf != DMR_DPF_CONFIRMED)) || (blocks == 0U) || (blocks > DMR_RX_MAX_BLOCKS))
+		if ((len < 10U) || ((dpf != DMR_DPF_UNCONFIRMED) && (dpf != DMR_DPF_CONFIRMED) && (dpf != DMR_DPF_SHORT_DEFINED)) ||
+				(blocks == 0U) || (blocks > DMR_RX_MAX_BLOCKS))
 #endif
 		{
 			return;
 		}
 
 		dmrRx.msg.group = ((data[0] & 0x80) != 0);
-		dmrRx.msg.pad = (data[1] & 0x0F);
+		// Short data gives the padding in bits (octet 9), the other packets in octets (octet 1 low nibble).
+		// Anytone SMS: defined short data, payload = 00 00 + UTF-16LE text + padding + CRC-32.
+		dmrRx.msg.pad = ((dpf == DMR_DPF_SHORT_DEFINED) ? (data[9] / 8U) : (data[1] & 0x0F));
 		dmrRx.msg.dst = ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 8) | data[4];
 		dmrRx.msg.src = ((uint32_t)data[5] << 16) | ((uint32_t)data[6] << 8) | data[7];
 
@@ -129,6 +154,12 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 			memcpy(&dmrRx.msg.data[dmrRx.msg.len], &data[skip], (len - skip));
 			dmrRx.msg.len += (len - skip);
 		}
+#if defined(MESSAGES_DEBUG_RX)
+		else if (len > skip)
+		{
+			// Buffer full: keep what fits (only the first 66 bytes are shown anyway), wait for the last block
+		}
+#endif
 		else
 		{
 			dmrRx.active = false;
@@ -157,6 +188,30 @@ void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len)
 	}
 }
 
+#if defined(MESSAGES_DEBUG_RX)
+// Shown as "EE <type> <crc ok> <data...>" from sender 0
+void messagingDmrDebugFrame(uint8_t dataType, bool crcOk, const uint8_t *data, uint8_t len)
+{
+	// Preamble CSBKs (opcode 0x3D) are already known and come in bursts, skip them
+	if ((dataType == 0x3U) && (len > 0U) && ((data[0] & 0x3FU) == 0x3DU))
+	{
+		return;
+	}
+
+	if ((dmrRxMailboxReady == false) && (len <= (DMR_RX_MAX_BYTES - 3U)))
+	{
+		dmrRxMailbox.src = 0;
+		dmrRxMailbox.data[0] = 0xEE;
+		dmrRxMailbox.data[1] = dataType;
+		dmrRxMailbox.data[2] = (crcOk ? 1U : 0U);
+		memcpy(&dmrRxMailbox.data[3], data, len);
+		dmrRxMailbox.len = (len + 3U);
+		__DMB();
+		dmrRxMailboxReady = true;
+	}
+}
+#endif
+
 static bool isPrintable(uint8_t c)
 {
 	return ((c >= 0x20U) && (c <= 0x7EU));
@@ -181,8 +236,8 @@ static size_t dmrExtractText(const uint8_t *data, size_t len, char *out, size_t 
 				n++;
 			}
 
-			// Anything shorter than 2 chars is just noise from binary headers
-			if ((n >= 2U) && (n > bestLen))
+			// A single 8 bit char is just noise from binary headers; a single UTF-16LE char (c, 0) is a 1 letter message
+			if ((n >= ((stride == 1U) ? 2U : 1U)) && (n > bestLen))
 			{
 				bestLen = n;
 				bestStart = i;
@@ -400,7 +455,7 @@ void messagingReceive(messagingTransport_t transport, const char *peer, const ch
 
 bool messagingSendDMR(uint32_t dstId, const char *text)
 {
-	uint8_t payload[(MESSAGING_TEXT_LEN - 1U) * 2U];
+	uint8_t payload[2U + ((MESSAGING_TEXT_LEN - 1U) * 2U)];
 	char peer[MESSAGING_PEER_LEN];
 	size_t chars = strlen(text);
 
@@ -414,14 +469,16 @@ bool messagingSendDMR(uint32_t dstId, const char *text)
 		chars = (MESSAGING_TEXT_LEN - 1U);
 	}
 
-	// UTF-16LE text
+	// Anytone SMS format: 00 00, then UTF-16LE text
+	payload[0] = 0;
+	payload[1] = 0;
 	for (size_t i = 0; i < chars; i++)
 	{
-		payload[i * 2U] = (uint8_t)text[i];
-		payload[(i * 2U) + 1U] = 0;
+		payload[2U + (i * 2U)] = (uint8_t)text[i];
+		payload[2U + (i * 2U) + 1U] = 0;
 	}
 
-	if (HRC6000DataTxStart(dstId, payload, (uint16_t)(chars * 2U)) == false)
+	if (HRC6000DataTxStart(dstId, payload, (uint16_t)(2U + (chars * 2U))) == false)
 	{
 		return false;
 	}

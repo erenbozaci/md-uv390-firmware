@@ -66,9 +66,10 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 - `application/source/functions/messaging.c` + `include/functions/messaging.h`: RAM-only ring buffer (12 messages, lost at power-off), canned messages, `messagingReceive()` (beep + toast), `messagingTick()` (called from the main loop, drains the DMR receive mailbox, 10 s watchdog on DMR TX), `messagingSendAPRS()`, `messagingSendDMR()`.
 - UI: `user_interface/menuMessages.c` (`MENU_MESSAGES`, Main menu "Messages", string offset 281 = `.messages`, language tag version 7). Digital channel: To = DMR ID (digits) -> DMR data call. Analog channel: To = callsign -> APRS message.
 - **APRS send**: `aprsMessageSend()` in `aprs.c` reuses the beacon path (`aprsBeaconingSendBeacon`) with a private `aprsOutgoingMessage.pending` flag; works with beaconing OFF but needs an APRS config on the channel. There is no APRS receive path.
-- **DMR receive**: `hrc6000SysReceivedDataInt()` (interrupt context) hands good data frames (types 0x6 header, 0x7/0x8/0xA blocks, read from SPI page 0x02) to `messagingDmrRxFrame()`. Only unconfirmed/confirmed data packets (DPF 2/3) addressed to our ID or current TG; no UDT/short data; text is the longest printable run (8-bit or UTF-16LE), heuristic.
-- **DMR transmit**: `HRC6000DataTxStart()` queues a job; the main loop (`applicationMain.c`, just before `hasSignal = false;`) holds a software PTT while `HRC6000DataTxIsActive()`, so the normal TX screen runs. In the slot state machine (`hrc6000TimeslotInterruptHandler`) `dataTx.inUse` bypasses the voice branches: data header x3 (reg 0x50 = 0x60), then one rate-1/2 block per active slot (0x70), no terminator. Header CRC/block CRC-32 come from the chip.
-- **Unverified on air** (as of this writing): data header type (0x60 vs 0x64), SAP value, payload format against commercial radios, RMO/repeater operation, ack handling. Treat failures there as expected-until-tested.
+- **DMR receive**: `hrc6000SysReceivedDataInt()` (interrupt context) hands good data frames (types 0x6 header, 0x7/0x8/0xA blocks, read from SPI page 0x02) to `messagingDmrRxFrame()`. Unconfirmed/confirmed data packets (DPF 2/3) and defined short data (DPF 0xD) addressed to our ID or current TG; no UDT/raw short data; text is the longest printable run (8-bit or UTF-16LE), heuristic.
+- **Anytone SMS (verified on air with an Anytone UV82, private call)**: preamble CSBKs (0xBD, count down to 02), then a defined short data header `0D A1 <dst> <src> 05 <pad bits>` (appended blocks = octet 0 bits 5..4 + octet 1 low nibble, padding in *bits* in octet 9), then rate 1/2 block(s): `00 00` + UTF-16LE text + padding + CRC-32. No ack requested. Group SMS and non-ASCII text not tested.
+- **DMR transmit**: `HRC6000DataTxStart()` queues a job; the main loop (`applicationMain.c`, just before `hasSignal = false;`) holds a software PTT while `HRC6000DataTxIsActive()`, so the normal TX screen runs. In the slot state machine (`hrc6000TimeslotInterruptHandler`) `dataTx.inUse` bypasses the voice branches: data header x3 (reg 0x50 = 0x60), then one rate-1/2 block per active slot (0x70), no terminator. Header CRC comes from the chip; the packet CRC-32 is computed in software (`hrc6000DataCrc32()`, the chip does not add it). TX uses the Anytone SMS format (defined short data, SAP 0xA, `00 00` + UTF-16LE), no preamble CSBKs.
+- **Verified on air 2026-10-17** with an Anytone UV82, simplex, private SMS, both directions. **Still unverified**: group SMS, RMO/repeater operation, ack handling, other brands. Treat failures there as expected-until-tested.
 
 ## Gotchas
 
@@ -95,7 +96,7 @@ Local feature work so far: VFO sweep band scope + scrolling waterfall in `uiVFOM
 
 ## Review findings kept as known limits
 
-- DMR TX payload is raw UTF-16LE with SAP 0 (only this firmware reads it; commercial radios expect IP/UDP text). The message CRC-32 is left to the chip (unverified); RX does not re-check it in software, and the pad octet count is read from header octet 1 low nibble.
+- DMR text is ASCII only (non-ASCII UTF-16 chars break the extracted text). RX does not re-check the CRC-32 in software (the chip only reports block CRCs).
 - A DMR message is added to the inbox as "sent" when queued, not when the transmission finished.
 
 ## Dual screen (Anytone style, two independent rows)

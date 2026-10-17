@@ -75,6 +75,9 @@ void messagingReceive(messagingTransport_t transport, const char *peer, const ch
 // good data frame (header or data block); it only reassembles into a static buffer.
 // messagingTick() must be called regularly from the main loop to decode and store completed messages.
 void messagingDmrRxFrame(uint8_t dataType, const uint8_t *data, uint8_t len);
+#if defined(MESSAGES_DEBUG_RX)
+void messagingDmrDebugFrame(uint8_t dataType, bool crcOk, const uint8_t *data, uint8_t len); // DEBUG_RX build only
+#endif
 void messagingTick(void);
 
 // Send a private DMR text message to a DMR ID (digital channel required). The text goes out as a
